@@ -1,3 +1,5 @@
+# app.py
+
 import sys
 import os
 import qtawesome as qta
@@ -10,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap, QImage, QIcon, QColor
 from PySide6.QtCore import (
     Qt, QSize, QPropertyAnimation, QEasingCurve, QAbstractAnimation, Slot,
-    QTimer  # <-- FIX: QTimer is imported
+    QTimer 
 )
 
 # Import the tab modules
@@ -19,7 +21,7 @@ from reports_tab import ReportsTab
 from settings_tab import create_settings_tab
 from about_tab import create_about_tab
 from Training.training_tab import create_training_tab 
-from virtual_keyboard import VirtualKeyboard # <-- This import is the same
+from virtual_keyboard import VirtualKeyboard 
 
 # --- Configuration Data ---
 sample_type_prefix = {
@@ -28,8 +30,9 @@ sample_type_prefix = {
     "Chicken Wing": "WG",
 }
 
-# --- FAN CONSTANTS ---
+# --- HARDWARE CONSTANTS ---
 FAN_PIN = 27
+LED_PIN = 17 # White LED Strip
 PWM_FREQ = 100
 
 # --- Theme Palettes ---
@@ -296,8 +299,7 @@ class MainWindow(QMainWindow):
         self.expanded_width = 180  
         self.collapsed_width = 50 
         
-        self.fan_chip = None
-        # self.keyboard = None # <-- We init keyboard differently now
+        self.gpio_handle = None # Controls Fan AND LED
         
         self.setWindowTitle("PoultriScan | Chicken Quality Analyzer")
         
@@ -311,13 +313,11 @@ class MainWindow(QMainWindow):
         self.setup_style()
         
         # --- INITIALIZE HARDWARE & TOOLS ---
-        self.initialize_global_fan()
+        self.initialize_global_gpio()
         
         # --- 1. KEYBOARD INITIALIZATION ---
-        # Instantiate the keyboard as a child of MainWindow
         self.keyboard = VirtualKeyboard(GLOBAL_PALETTE, self)
-        self.keyboard.hide() # Start hidden
-        # Connect its 'close' signal to our 'hide' function
+        self.keyboard.hide() 
         self.keyboard.close_requested.connect(self.on_keyboard_close)
         # --- END KEYBOARD INITIALIZATION ---
 
@@ -333,107 +333,76 @@ class MainWindow(QMainWindow):
         self.setup_ui() 
         self.showFullScreen()
 
-        # Connect global focus changed signal to detect text field taps
         QApplication.instance().focusChanged.connect(self.on_focus_changed)
         
-    def initialize_global_fan(self):
-        """Initializes the fan GPIO pin ONCE for the whole application."""
+    def initialize_global_gpio(self):
+        """Initializes the main GPIO chip (0) for Fan and LED."""
         try:
-            self.fan_chip = lgpio.gpiochip_open(0)
-            lgpio.gpio_claim_output(self.fan_chip, FAN_PIN)
-            lgpio.tx_pwm(self.fan_chip, FAN_PIN, PWM_FREQ, 0) # Start off
-            print("MainWindow: Global Fan GPIO initialized successfully via lgpio.")
+            self.gpio_handle = lgpio.gpiochip_open(0)
+            # Fan (Pin 27)
+            lgpio.gpio_claim_output(self.gpio_handle, FAN_PIN)
+            lgpio.tx_pwm(self.gpio_handle, FAN_PIN, PWM_FREQ, 0) # Start off
+            
+            # LED (Pin 17)
+            lgpio.gpio_claim_output(self.gpio_handle, LED_PIN)
+            lgpio.gpio_write(self.gpio_handle, LED_PIN, 0) # Start off
+
+            print("MainWindow: Global GPIO (Fan/LED) initialized successfully via lgpio.")
         except Exception as e:
-            print(f"MainWindow FATAL WARNING: Could not initialize global fan GPIO. {e}")
-            if self.fan_chip is not None:
+            print(f"MainWindow FATAL WARNING: Could not initialize global GPIO. {e}")
+            if self.gpio_handle is not None:
                 try:
-                    lgpio.gpiochip_close(self.fan_chip)
+                    lgpio.gpiochip_close(self.gpio_handle)
                 except Exception:
                     pass
-            self.fan_chip = None
+            self.gpio_handle = None
 
-    # --- 2. NEW: KEYBOARD POSITIONING & MANAGEMENT ---
+    # --- KEYBOARD POSITIONING & MANAGEMENT ---
     
     def position_keyboard(self):
-        """Positions the keyboard at the bottom-center of the main window."""
         if not self.keyboard or not self.keyboard.isVisible():
             return
-            
-        # Use the main window's size
         win_size = self.size()
-        kb_size = self.keyboard.size() # Use actual size
-        
+        kb_size = self.keyboard.size() 
         x = (win_size.width() - kb_size.width()) // 2
-        y = win_size.height() - kb_size.height() - 5 # 5px padding from bottom
-        
+        y = win_size.height() - kb_size.height() - 5 
         self.keyboard.move(x, y)
 
     @Slot()
     def on_keyboard_close(self):
-        """Hides the keyboard and cleans up its target."""
         if self.keyboard and self.keyboard.isVisible():
             self.keyboard.hide()
             if self.keyboard.target_widget:
-                # Remove the event filter from the target
                 self.keyboard.target_widget.removeEventFilter(self.keyboard)
                 self.keyboard.target_widget = None
 
-    # --- FIX: ADDED HELPER FUNCTION ---
     @Slot(QWidget)
     def show_keyboard_for(self, widget):
-        """
-        Internal helper to show and configure the keyboard
-        for a specific target widget.
-        """
-        # Re-check: Is the focus *still* on this widget?
-        # This prevents showing if focus moved again
-        # during the timer's delay.
         if QApplication.focusWidget() != widget:
             return
-
         if self.keyboard.target_widget:
             self.keyboard.target_widget.removeEventFilter(self.keyboard)
-        
         self.keyboard.target_widget = widget
         self.keyboard.target_widget.installEventFilter(self.keyboard)
-        
         self.keyboard.show()
         self.keyboard.raise_()
         self.position_keyboard()
 
-    # --- FIX: UPDATED FOCUS FUNCTION ---
     @Slot("QWidget*", "QWidget*")
     def on_focus_changed(self, old, new):
-        """
-        Shows or hides the keyboard based on the widget that
-        gained focus.
-        """
         if not self.keyboard:
             return
-
-        # CASE 1: A text field gained focus
         if new and isinstance(new, (QLineEdit, QTextEdit, QPlainTextEdit)):
-            # Ignore read-only fields
             if isinstance(new, QTextEdit) and new.isReadOnly():
-                 self.on_keyboard_close() # Close keyboard if it was open
+                 self.on_keyboard_close() 
                  return
-                 
-            # Use a single-shot timer to "debounce" the show.
-            # This prevents flicker on rapid focus changes.
             QTimer.singleShot(50, lambda: self.show_keyboard_for(new))
-
-        # CASE 2: Something *else* gained focus
-        # We hide the keyboard UNLESS the new focus is the keyboard itself
         elif new is None or not self.keyboard.isAncestorOf(new):
             self.on_keyboard_close()
 
     def resizeEvent(self, event):
-        """
-        Called when the main window is resized. We must
-        re-position the keyboard.
-        """
         super().resizeEvent(event)
-        self.position_keyboard() # Reposition keyboard on resize
+        self.position_keyboard() 
 
     # --- END KEYBOARD MANAGEMENT ---
 
@@ -544,7 +513,8 @@ class MainWindow(QMainWindow):
     def create_content_pages(self):
         """Creates and adds all tab widgets to the QStackedWidget."""
         # 1. Dashboard (Index 0)
-        dashboard_tab = DashboardTab(GLOBAL_PALETTE, sample_type_prefix, self.fan_chip)
+        # Pass the shared gpio_handle instead of just fan_chip
+        dashboard_tab = DashboardTab(GLOBAL_PALETTE, sample_type_prefix, self.gpio_handle)
         self.content_stack.addWidget(dashboard_tab)
 
         # 2. Reports (Index 1)
@@ -564,7 +534,8 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(about_tab)
         
         # 5. Training (Index 4)
-        training_tab = create_training_tab(self.content_stack, GLOBAL_PALETTE, self, self.fan_chip)
+        # Pass shared handle to training tab as well (it previously took fan_chip)
+        training_tab = create_training_tab(self.content_stack, GLOBAL_PALETTE, self, self.gpio_handle)
         self.content_stack.addWidget(training_tab)
 
 
@@ -658,41 +629,41 @@ class MainWindow(QMainWindow):
         current_index = self.content_stack.currentIndex() 
         self.setup_style()
         
-        # --- 3. RE-CREATE KEYBOARD WIDGET ON THEME SWITCH ---
         if self.keyboard:
-            self.keyboard.close() # Close widget
-            self.keyboard.deleteLater() # Mark for deletion
+            self.keyboard.close() 
+            self.keyboard.deleteLater() 
         
-        # Re-create it as a child of self (MainWindow)
         self.keyboard = VirtualKeyboard(GLOBAL_PALETTE, self)
-        self.keyboard.hide() # Start hidden
+        self.keyboard.hide() 
         self.keyboard.close_requested.connect(self.on_keyboard_close)
-        # --- END RE-CREATION ---
         
         self.setup_ui(initial_page=current_index)
         
     def closeEvent(self, event):
-        """On application close, release the fan GPIO."""
-        print("MainWindow: Close event triggered. Releasing global fan...")
+        """On application close, release all GPIO pins."""
+        print("MainWindow: Close event triggered. Releasing GPIO...")
         try:
-            if self.fan_chip is not None:
-                lgpio.tx_pwm(self.fan_chip, FAN_PIN, PWM_FREQ, 0) # Turn off
-                lgpio.gpio_free(self.fan_chip, FAN_PIN)
-                lgpio.gpiochip_close(self.fan_chip)
-                print("MainWindow: Global fan GPIO released.")
-                self.fan_chip = None
+            if self.gpio_handle is not None:
+                # Turn off both devices
+                lgpio.tx_pwm(self.gpio_handle, FAN_PIN, PWM_FREQ, 0) 
+                lgpio.gpio_write(self.gpio_handle, LED_PIN, 0)
+                
+                # Free pins
+                lgpio.gpio_free(self.gpio_handle, FAN_PIN)
+                lgpio.gpio_free(self.gpio_handle, LED_PIN)
+                
+                lgpio.gpiochip_close(self.gpio_handle)
+                print("MainWindow: GPIO (Fan/LED) released.")
+                self.gpio_handle = None
         except Exception as e:
-            print(f"MainWindow: Error during fan cleanup: {e}")
+            print(f"MainWindow: Error during GPIO cleanup: {e}")
         
         super().closeEvent(event)
         
 
 
 def main():
-    # 1. Force disable standard embedded input methods for this process only
     os.environ["QT_IM_MODULE"] = "none"
-
-    # 2. Tell Qt explicitly not to use any native on-screen keyboard
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_DisableNativeVirtualKeyboard, True)
     
     app = QApplication(sys.argv)

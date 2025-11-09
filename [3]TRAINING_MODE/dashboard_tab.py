@@ -23,7 +23,9 @@ report_file = "poultri_scan_report.csv"
 DATABASE_LOG_FILE = "raw_database_log.csv"
 current_sample_id = None
 
+# --- HARDWARE CONSTANTS ---
 FAN_PIN = 27
+LED_PIN = 17  # White LED Strip (5050 5V)
 PWM_FREQ = 100
 PURGE_DURATION_MS = 8000 # 8 seconds
 
@@ -32,7 +34,6 @@ try:
     from Sensors.as7265x import read_all_sensors, SPECTROMETER_PLACEHOLDER
     from Sensors.data_model import calculate_group_scores, calculate_overall_quality
 except ImportError as e:
-    # ... (Error handling unchanged) ...
     print("="*50)
     print(f"FATAL ERROR: Could not import sensor/data modules.")
     print(f"Error: {e}")
@@ -55,13 +56,13 @@ except ImportError as e:
 
 
 class SensorWorker(QObject):
-    # ... (Unchanged) ...
     finished = Signal(dict)
     error = Signal(str)
     
     @Slot()
     def run_scan(self):
         try:
+            # LED is already ON here (handled by standard run_test before thread start)
             raw_readings = read_all_sensors() 
             self.finished.emit(raw_readings)
         except Exception as e:
@@ -70,8 +71,7 @@ class SensorWorker(QObject):
 
 class DashboardTab(QWidget):
 
-    # <-- 1. MODIFY __init__ TO ACCEPT THE FAN CHIP ---
-    def __init__(self, palette, sample_type_prefix, fan_chip_handle, parent=None):
+    def __init__(self, palette, sample_type_prefix, gpio_handle=None, parent=None):
         super().__init__(parent)
 
         self._score_kpi_value = 0 
@@ -97,14 +97,14 @@ class DashboardTab(QWidget):
         self.btn_run_icon_color = self.palette.get("BUTTON_TEXT", self.palette["BG"])
         self.btn_clear_icon_color = self.palette.get("UNSELECTED_TEXT", "#555760")
         
-        # <-- 2. SET FAN CHIP FROM PARENT ---
-        self.fan_chip = fan_chip_handle 
-        
+        # GPIO Handle passed from Main Window (controls both Fan and LED)
+        self.gpio_handle = gpio_handle
+
         self.purge_timer = QTimer(self) 
         self.purge_timer.setSingleShot(True)
         self.purge_timer.timeout.connect(self.on_purge_complete)
 
-        # --- Main Layout (Unchanged from 7-inch version) ---
+        # --- Main Layout ---
         page_layout = QVBoxLayout(self) 
         page_layout.setContentsMargins(0, 0, 0, 0)
         scroll_area = QScrollArea()
@@ -239,10 +239,7 @@ class DashboardTab(QWidget):
         
         self.btn_run.clicked.connect(self.run_test)
         self.clear_dashboard()
-        
-        # <-- 3. REMOVED CALL TO self.initialize_fan() ---
-        
-    # ... (_create_card, _create_index_card are unchanged, omitted for brevity) ...
+
     def get_score_kpi_value(self):
         return self._score_kpi_value
     def set_score_kpi_value(self, value):
@@ -293,28 +290,36 @@ class DashboardTab(QWidget):
         content_layout.addWidget(ref['bar'])
         return ref
 
-    # <-- 4. REMOVED 'cleanup' METHOD ---
-    # <-- 5. REMOVED 'initialize_fan' METHOD ---
-    # <-- 6. REMOVED 'release_fan' METHOD ---
+    # --- HARDWARE CONTROL (Fan & LED) ---
             
-    # <-- 7. SIMPLIFY '_control_fan' ---
     def _control_fan(self, state):
-        """Controls the purge fan using the SHARED lgpio handle."""
-        if self.fan_chip is None:
-            print("DashboardTab Fan control skipped: Global fan_chip is None.")
+        """Controls the purge fan using lgpio hardware PWM on Pin 27."""
+        if self.gpio_handle is None:
+            print("DashboardTab: Hardware control skipped (GPIO not initialized).")
             return
-            
         try:
             if state:
-                lgpio.tx_pwm(self.fan_chip, FAN_PIN, PWM_FREQ, 100) 
+                lgpio.tx_pwm(self.gpio_handle, FAN_PIN, PWM_FREQ, 100) 
                 print("DashboardTab: FAN ON")
             else:
-                lgpio.tx_pwm(self.fan_chip, FAN_PIN, PWM_FREQ, 0)
+                lgpio.tx_pwm(self.gpio_handle, FAN_PIN, PWM_FREQ, 0)
                 print("DashboardTab: FAN OFF")
         except Exception as e:
-            print(f"DashboardTab Fan control error (lgpio): {e}")
+            print(f"DashboardTab Fan control error: {e}")
 
-    # ... (Data saving and UI animation methods unchanged, omitted for brevity) ...
+    def _control_led(self, state):
+        """Controls the white 5050 LED strip on GPIO 17."""
+        if self.gpio_handle is None:
+            print("DashboardTab: LED control skipped (GPIO not initialized).")
+            return
+        try:
+            # Use simple digital write for the LED strip driver
+            lgpio.gpio_write(self.gpio_handle, LED_PIN, 1 if state else 0)
+            status = "ON" if state else "OFF"
+            print(f"DashboardTab: LED {status} (Pin {LED_PIN})")
+        except Exception as e:
+            print(f"DashboardTab LED control error: {e}")
+
     def _get_new_sample_id(self, sample_type):
         prefix = self.sample_type_prefix[sample_type] 
         id_prefix_str = f"PS-{prefix}_" 
@@ -357,7 +362,7 @@ class DashboardTab(QWidget):
     def save_to_database_log(self, sample_id, raw_readings):
         header = (
             ['sample_id', 'temp', 'hum', 'mq_137', 'mq_135', 'mq_4', 'mq_3'] +
-            [f'as7265x_ch{i+1}' for i in range(18)] # 18 channels
+            [f'as7265x_ch{i+1}' for i in range(18)] 
         )
         try:
             data_row = [
@@ -370,13 +375,13 @@ class DashboardTab(QWidget):
                 raw_readings.get('MQ-3 (Alcohol)', 'N/A'),
             ]
             for i in range(18):
-                key = f'AS7265X_ch{i+1}' # Key from sensor file
+                key = f'AS7265X_ch{i+1}' 
                 data_row.append(raw_readings.get(key, 'N/A'))
             file_exists = os.path.exists(DATABASE_LOG_FILE)
             with open(DATABASE_LOG_FILE, "a", newline="") as f:
                 writer = csv.writer(f)
                 if not file_exists:
-                    writer.writerow(header) # Write header only if file is new
+                    writer.writerow(header) 
                 writer.writerow(data_row)
         except Exception as e:
             print(f"CRITICAL: Failed to write to database log: {e}")
@@ -428,9 +433,12 @@ class DashboardTab(QWidget):
     
     @Slot(dict)
     def update_gui_and_archive(self, raw_readings):
+        # --- IMPORTANT: TURN LED OFF immediately after scan finishes ---
+        self._control_led(False)
+
         # Stop "Scanning" UIs
-        self.progress_bar.setRange(0, 100) # Set to determinate
-        self.progress_bar.setValue(100)    # Show 100% complete
+        self.progress_bar.setRange(0, 100) 
+        self.progress_bar.setValue(100)    
         self.streaming_timer.stop()
 
         if self.scan_animation:
@@ -438,11 +446,10 @@ class DashboardTab(QWidget):
         self.btn_run.setIcon(qta.icon('fa5s.play', color=self.btn_run_icon_color))
         
         # --- START PURGE STATE ---
-        # Buttons remain DISABLED
         self.quality_label.setText(f"PURGING ({PURGE_DURATION_MS // 1000}s)...")
         self.quality_label.setStyleSheet(f"color: {self.PRIMARY_COLOR};")
         self.status_light.setStyleSheet(f"background-color: {self.PRIMARY_COLOR}; border-radius: 6px;") 
-        self.progress_bar.setRange(0, 0) # Set to indeterminate (spinner)
+        self.progress_bar.setRange(0, 0) 
         
         print(f"Starting {PURGE_DURATION_MS}ms post-scan purge...")
         self._control_fan(True)
@@ -560,10 +567,8 @@ class DashboardTab(QWidget):
         QTimer.singleShot(1200, _show_archive_dialog)
 
 
-    
     @Slot()
     def on_purge_complete(self):
-        """Called by QTimer to stop fan and re-enable UI."""
         print("Post-scan purge complete.")
         self._control_fan(False)
         
@@ -580,7 +585,6 @@ class DashboardTab(QWidget):
         self.btn_clear.setIcon(qta.icon('fa5s.broom', color=self.btn_clear_icon_color))
 
 
-    
     @Slot(str)
     def handle_scan_error(self, error_message):
         self.streaming_timer.stop()
@@ -595,8 +599,10 @@ class DashboardTab(QWidget):
         self.quality_label.setStyleSheet(f"color: {self.DANGER_COLOR};")
         self.status_light.setStyleSheet(f"background-color: {self.DANGER_COLOR}; border-radius: 6px;") 
         
+        # Ensure hardware OFF on error
         self._control_fan(False) 
-        self.purge_timer.stop() # Stop any pending purge
+        self._control_led(False)
+        self.purge_timer.stop() 
         
         self.btn_run.setEnabled(True)
         self.btn_clear.setEnabled(True)
@@ -604,16 +610,15 @@ class DashboardTab(QWidget):
         
         show_custom_message(self, "Sensor Error", f"Failed to read hardware sensors:\n{error_message}", "error", self.palette)
 
-    
     def run_test(self):
         sample_type = self.sample_type_combobox.currentText()
         if not sample_type:
             show_custom_message(self, "Missing Selection", "Please select a sample type before running the test.", "warning", self.palette)
             return
 
-        # <-- 8. REMOVED FAN INITIALIZATION BLOCK ---
-        # (The check for self.fan_chip is no longer needed here,
-        # as it's handled by _control_fan if it's None)
+        if self.gpio_handle is None:
+             show_custom_message(self, "Hardware Error", "GPIO is not initialized. Cannot run test.", "error", self.palette)
+             return
 
         self.btn_run.setEnabled(False)
         self.btn_clear.setEnabled(False)
@@ -640,6 +645,9 @@ class DashboardTab(QWidget):
         self.progress_bar.setRange(0, 0)
         self.stream_dot_count = 0
         self.streaming_timer.start(250) 
+
+        # --- TURN ON LED FOR SCAN ---
+        self._control_led(True)
         
         self.scan_thread = QThread()
         self.scan_worker = SensorWorker()
@@ -656,7 +664,6 @@ class DashboardTab(QWidget):
         self.scan_thread.start()
 
 
-    
     def clear_dashboard(self):
         global current_sample_id
         if hasattr(self, 'anim_score') and self.anim_score:
@@ -665,8 +672,10 @@ class DashboardTab(QWidget):
             self.scan_animation.stop()
         self.streaming_timer.stop()
         
-        self.purge_timer.stop() # Stop any active purge
-        self._control_fan(False) # Turn fan off just in case
+        self.purge_timer.stop() 
+        # Ensure hardware is OFF
+        self._control_fan(False) 
+        self._control_led(False)
         
         self.sample_type_combobox.setCurrentText("Chicken Breast")
         self.sample_id_label.setText("PS-INIT-0000")
@@ -691,7 +700,7 @@ class DashboardTab(QWidget):
         self.raw_label_refs["MQ-137 (Ammonia)"].setText("NH₃ (Ammonia): N/A V")
         self.raw_label_refs["MQ-135 (Air Quality)"].setText("Air Quality: N/A V")
         self.raw_label_refs["MQ-3 (Alcohol)"].setText("Alcohol: N/A V")
-        self.raw_label_refs["MQ-4 (Methane)"].setText("CH₄: N/A V")
+        self.raw_label_refs["MQ-4 (Methane)"].setText("CH₄ (Methane): N/A V")
         
         self.raw_label_refs["WHC Index"].setText("WHC Index: N/A")
         self.raw_label_refs["Fatty Acid Profile"].setText("FAC Index: N/A")
