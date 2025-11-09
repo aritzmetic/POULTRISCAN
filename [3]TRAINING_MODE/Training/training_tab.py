@@ -6,7 +6,7 @@ import csv
 import json
 import qtawesome as qta
 import time
-import lgpio  # <-- 1. ADDED LGPIO IMPORT
+import lgpio  # <-- Required for Fan and LED control
 import statistics # For calculating standard deviation
 from datetime import datetime
 import re # For email validation
@@ -32,14 +32,14 @@ if PARENT_DIR not in sys.path:
     sys.path.append(PARENT_DIR)
 # -------------------------------
 
-# --- 2. REAL SENSOR IMPORTS (MODIFIED) ---
+# --- 2. REAL SENSOR IMPORTS ---
 try:
     from custom_dialog import show_custom_message, CustomDialog
     from Sensors.aht20 import read_aht20, UninitializedAHT20Error
     from Sensors.enose import read_enose, UninitializedENoseError
     from Sensors.as7265x import (
         read_spectrometer, as_led_on, as_led_off,
-        as_uv_led_on, as_uv_led_off, as_ir_led_on, as_ir_led_off, # <-- Keep all controls
+        as_uv_led_on, as_uv_led_off, as_ir_led_on, as_ir_led_off,
         UninitializedAS7265XError
     )
 except ImportError as e:
@@ -61,7 +61,7 @@ except ImportError as e:
         class UninitializedENoseError(Exception): pass
 # -------------------------------
 
-# --- 3. SMTP Configuration (Unchanged) ---
+# --- 3. SMTP Configuration ---
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "poultriscan4201@gmail.com"
@@ -69,11 +69,13 @@ SENDER_PASSWORD = "ikaggyzetigoajre"
 # --- END SMTP Configuration ---
 
 
-# --- 4. File & Directory Definitions (MODIFIED) ---
-# --- ADDED FAN CONFIG ---
+# --- 4. File & Directory Definitions ---
+# --- HARDWARE CONFIG ---
 FAN_PIN = 27
+LED_PIN = 17    # <-- 5050 White LED Strip
 PWM_FREQ = 100
-# --- End Fan Config ---
+# --- End Hardware Config ---
+
 TRAINING_ROOT_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(TRAINING_ROOT_DIR, "data")
 RAW_DIR = os.path.join(DATA_DIR, "raw_json")
@@ -89,34 +91,32 @@ RAW_BLOCK_DATA_FILE = os.path.join(DATA_DIR, "raw_block_data_v3_mq3_no_uvir.csv"
 MQ_BASELINE_CURRENT_FILE = os.path.join(BASELINE_DIR, "mq_baseline_current.json")
 AS_REFS_FILE = os.path.join(REFS_DIR, "as7265_refs.json")
 
-# --- 5. CSV Headers (MODIFIED - REMOVED UV/IR) ---
+# --- 5. CSV Headers ---
 
 CANONICAL_HEADER = [
     "sample_id", "meat_type", "storage_type", "hour", "timestamp_iso", 
     "temp_c", "hum_pct",
     "frozen_age_days", "thaw_method", "time_since_thaw_min",
-    "final_mq137", "final_mq135", "final_mq4", "final_mq3", # <-- Corrected to MQ4/MQ3
+    "final_mq137", "final_mq135", "final_mq4", "final_mq3",
     # White Light Channels (Visible Reflectance)
     "AS7265X_ch1", "AS7265X_ch2", "AS7265X_ch3", "AS7265X_ch4",
     "AS7265X_ch5", "AS7265X_ch6", "AS7265X_ch7", "AS7265X_ch8",
     "AS7265X_ch9", "AS7265X_ch10", "AS7265X_ch11", "AS7265X_ch12",
     "AS7265X_ch13", "AS7265X_ch14", "AS7265X_ch15", "AS7265X_ch16",
     "AS7265X_ch17", "AS7265X_ch18",
-    # UV and IR channels are REMOVED
     "avg_valid", "cv_flag", "final_label", "ground_truth_value"
 ]
 
 BASELINE_HEADER = [
     "timestamp_iso", "operator", "ambient_temp", "ambient_hum", 
-    "baseline_mq137", "baseline_mq135", "baseline_mq4", "baseline_mq3" # <-- Corrected
+    "baseline_mq137", "baseline_mq135", "baseline_mq4", "baseline_mq3"
 ] + [f"as_dark_ref_ch{i}" for i in range(1, 19)] \
   + [f"as_white_ref_ch{i}" for i in range(1, 19)]
-  # UV and IR refs are REMOVED
 
 RAW_BLOCK_HEADER = [
     "sample_id", "hour", "timestamp_iso", "led_source",
     "temp_c", "hum_pct",
-    "MQ-137 (Ammonia)", "MQ-135 (Air Quality)", "MQ-4 (Methane)", "MQ-3 (Alcohol)", # <-- Corrected
+    "MQ-137 (Ammonia)", "MQ-135 (Air Quality)", "MQ-4 (Methane)", "MQ-3 (Alcohol)",
     "AS7265X_ch1", "AS7265X_ch2", "AS7265X_ch3", "AS7265X_ch4",
     "AS7265X_ch5", "AS7265X_ch6", "AS7265X_ch7", "AS7265X_ch8",
     "AS7265X_ch9", "AS7265X_ch10", "AS7265X_ch11", "AS7265X_ch12",
@@ -125,23 +125,9 @@ RAW_BLOCK_HEADER = [
 ]
 
 
-# --- 6. Helper Functions (MODIFIED) ---
-# --- DELETED PLACEHOLDER _control_fan ---
-
-def _control_5050_led(state):
-    """
-    Placeholder function to control the 5V 5050 LED strip.
-    ACTION REQUIRED: Replace this with your actual GPIO/hardware code.
-    """
-    if state:
-        # print("DEBUG: 5050 LED Strip ON")
-        pass
-    else:
-        # print("DEBUG: 5050 LED Strip OFF")
-        pass
+# --- 6. Helper Functions ---
 
 def _create_card(parent, title, palette, icon_name=None):
-    # (Unchanged)
     card_frame = QWidget(parent)
     card_frame.setObjectName("card")
     card_layout = QVBoxLayout(card_frame)
@@ -175,7 +161,7 @@ def _get_with_nan(data_dict, key):
 # -----------------------------------
 
 
-# --- EmailWorker CLASS (Unchanged) ---
+# --- EmailWorker CLASS ---
 class EmailWorker(QObject):
     finished = Signal(str) 
     error = Signal(str, str)
@@ -229,7 +215,7 @@ class EmailWorker(QObject):
 # --- END EmailWorker CLASS ---
 
 
-# --- MultiCsvSelectDialog CLASS (Unchanged) ---
+# --- MultiCsvSelectDialog CLASS ---
 class MultiCsvSelectDialog(QDialog):
     def __init__(self, file_map, palette, parent=None):
         super().__init__(parent)
@@ -345,7 +331,7 @@ class MultiCsvSelectDialog(QDialog):
 # --- END MultiCsvSelectDialog CLASS ---
 
 
-# --- CsvViewerDialog CLASS (Unchanged) ---
+# --- CsvViewerDialog CLASS ---
 class CsvViewerDialog(QDialog):
     def __init__(self, palette, file_path, parent=None):
         super().__init__(parent)
@@ -407,7 +393,7 @@ class CsvViewerDialog(QDialog):
 # --- END CsvViewerDialog CLASS ---
 
 
-# --- REAL MQ BASELINE WORKER (MODIFIED) ---
+# --- REAL MQ BASELINE WORKER ---
 class MQBaselineWorker(QObject):
     finished = Signal(dict)
     progress = Signal(int)
@@ -420,7 +406,7 @@ class MQBaselineWorker(QObject):
     @Slot()
     def run(self):
         try:
-            # <-- MODIFIED: Using MQ4 and MQ3
+            # Using MQ4 and MQ3
             readings = {"mq137": [], "mq135": [], "mq4": [], "mq3": [], "temp": [], "hum": []}
             num_steps = int(self.duration / self.interval)
             for i in range(num_steps):
@@ -432,17 +418,16 @@ class MQBaselineWorker(QObject):
                 readings["mq137"].append(mq_data["MQ-137 (Ammonia)"])
                 readings["mq135"].append(mq_data["MQ-135 (Air Quality)"])
                 readings["mq4"].append(mq_data["MQ-4 (Methane)"])
-                readings["mq3"].append(mq_data["MQ-3 (Alcohol)"]) # <-- Corrected
+                readings["mq3"].append(mq_data["MQ-3 (Alcohol)"])
                 readings["temp"].append(aht_data["Temperature"])
                 readings["hum"].append(aht_data["Humidity"])
                 time.sleep(self.interval)
                 self.progress.emit(i + 1)
-            # <-- MODIFIED: Using MQ4 and MQ3
             final_baseline = {
                 "baseline_mq137": statistics.mean(readings["mq137"]),
                 "baseline_mq135": statistics.mean(readings["mq135"]),
                 "baseline_mq4": statistics.mean(readings["mq4"]),
-                "baseline_mq3": statistics.mean(readings["mq3"]), # <-- Corrected
+                "baseline_mq3": statistics.mean(readings["mq3"]),
                 "baseline_timestamp": datetime.now().isoformat(),
                 "operator": "system",
                 "ambient_temp": statistics.mean(readings["temp"]),
@@ -455,14 +440,16 @@ class MQBaselineWorker(QObject):
             self.error.emit(f"MQ Baseline failed: {e}")
     def stop(self):
         self._is_running = False
-# --- END MODIFIED MQBaselineWorker ---
+# --- END MQBaselineWorker ---
 
 
-# --- 7. REAL MEASUREMENT WORKER (MODIFIED - REMOVED UV/IR) ---
+# --- 7. REAL MEASUREMENT WORKER ---
 class MeasurementWorker(QObject):
     update_status = Signal(str)
     measurement_complete = Signal(dict)
     error = Signal(str)
+    # Signal to request LED control from main thread (safe hardware access)
+    request_led_control = Signal(bool)
     
     def __init__(self, sample_info, mq_baseline):
         super().__init__()
@@ -472,7 +459,7 @@ class MeasurementWorker(QObject):
 
     @Slot()
     def run(self):
-        """Runs the main 3-block measurement loop, capturing 1 spectrum (White) per read."""
+        """Runs the main 3-block measurement loop."""
         try:
             all_block_avg_data = []
             raw_data_rows_to_write = []
@@ -483,7 +470,6 @@ class MeasurementWorker(QObject):
                     return
                 self.update_status.emit(f"--- Starting Block {block_num}/3 ---")
                 
-                # <-- MODIFIED: Using MQ4 and MQ3
                 block_reads_mq137, block_reads_mq135, block_reads_mq4, block_reads_mq3 = [], [], [], []
                 block_reads_as_white = [] 
                 block_reads_temp = []
@@ -497,18 +483,18 @@ class MeasurementWorker(QObject):
                     self.update_status.emit(f"Block {block_num}: Reading (White, MQ, AHT) ({i+1}/5)...")
                     
                     # --- Read 1: WHITE + MQ + AHT ---
-                    _control_5050_led(True)
+                    # Request Main Thread to turn ON 5050 LED
+                    self.request_led_control.emit(True)
                     as_led_on()
                     time.sleep(2.0)
                     
                     mq_data = read_enose()
                     aht_data = read_aht20()
-                    # --- MODIFIED: Uses new read_spectrometer() ---
                     spec_data_white = read_spectrometer()
                     
                     as_led_off()
-                    _control_5050_led(False)
-                    # --- UV and IR reads are REMOVED ---
+                    # Request Main Thread to turn OFF 5050 LED
+                    self.request_led_control.emit(False)
                     
                     read_timestamp = datetime.now().isoformat()
                     
@@ -516,11 +502,10 @@ class MeasurementWorker(QObject):
                     block_reads_mq137.append(mq_data["MQ-137 (Ammonia)"])
                     block_reads_mq135.append(mq_data["MQ-135 (Air Quality)"])
                     block_reads_mq4.append(mq_data["MQ-4 (Methane)"])
-                    block_reads_mq3.append(mq_data["MQ-3 (Alcohol)"]) # <-- Corrected
+                    block_reads_mq3.append(mq_data["MQ-3 (Alcohol)"])
                     block_reads_temp.append(aht_data["Temperature"])
                     block_reads_hum.append(aht_data["Humidity"])
                     block_reads_as_white.append(spec_data_white)
-                    # --- UV and IR storage is REMOVED ---
 
                     # --- Store raw row data (1 row per read) ---
                     common_data = {
@@ -534,7 +519,6 @@ class MeasurementWorker(QObject):
                     raw_row_white = {**common_data, **mq_data, "led_source": "WHITE"}
                     raw_row_white.update(spec_data_white)
                     raw_data_rows_to_write.append(raw_row_white)
-                    # --- UV and IR raw rows are REMOVED ---
                     
                     if i < 4:
                         time.sleep(3) # 3-second interval
@@ -544,7 +528,7 @@ class MeasurementWorker(QObject):
                 block_avg_dict["block_mq137"] = statistics.mean(block_reads_mq137)
                 block_avg_dict["block_mq135"] = statistics.mean(block_reads_mq135)
                 block_avg_dict["block_mq4"] = statistics.mean(block_reads_mq4)
-                block_avg_dict["block_mq3"] = statistics.mean(block_reads_mq3) # <-- Corrected
+                block_avg_dict["block_mq3"] = statistics.mean(block_reads_mq3)
                 block_avg_dict["temp"] = statistics.mean(block_reads_temp)
                 block_avg_dict["hum"] = statistics.mean(block_reads_hum)
                 
@@ -553,7 +537,6 @@ class MeasurementWorker(QObject):
                     block_avg_dict[key] = statistics.mean(
                         [read[key] for read in block_reads_as_white]
                     )
-                    # --- UV and IR averaging is REMOVED ---
                 
                 all_block_avg_data.append(block_avg_dict)
                 
@@ -564,7 +547,6 @@ class MeasurementWorker(QObject):
 
             # --- All 3 blocks complete, save all raw data ---
             try:
-                # --- MODIFIED: Writes to new, versioned file ---
                 file_exists = os.path.exists(RAW_BLOCK_DATA_FILE)
                 with open(RAW_BLOCK_DATA_FILE, 'a', newline='') as f:
                     writer = csv.DictWriter(f, fieldnames=RAW_BLOCK_HEADER)
@@ -573,7 +555,6 @@ class MeasurementWorker(QObject):
                     for row_dict in raw_data_rows_to_write:
                         row_to_write = {h: _get_with_nan(row_dict, h) for h in RAW_BLOCK_HEADER}
                         writer.writerow(row_to_write)
-                # Saved 15 reads (5 reads * 3 blocks * 1 row/read)
                 self.update_status.emit(f"Saved 15 raw reads to {os.path.basename(RAW_BLOCK_DATA_FILE)}")
             except Exception as e:
                 self.error.emit(f"Failed to save raw block data: {e}")
@@ -598,14 +579,13 @@ class MeasurementWorker(QObject):
             final_data_row_dict["final_mq137"] = statistics.mean(b["block_mq137"] for b in all_block_avg_data)
             final_data_row_dict["final_mq135"] = statistics.mean(b["block_mq135"] for b in all_block_avg_data)
             final_data_row_dict["final_mq4"] = statistics.mean(b["block_mq4"] for b in all_block_avg_data)
-            final_data_row_dict["final_mq3"] = statistics.mean(b["block_mq3"] for b in all_block_avg_data) # <-- Corrected
+            final_data_row_dict["final_mq3"] = statistics.mean(b["block_mq3"] for b in all_block_avg_data)
             final_data_row_dict["temp_c"] = statistics.mean(b["temp"] for b in all_block_avg_data)
             final_data_row_dict["hum_pct"] = statistics.mean(b["hum"] for b in all_block_avg_data)
             
             for i in range(1, 19):
                 key_white = f"AS7265X_ch{i}"
                 final_data_row_dict[key_white] = statistics.mean(b[key_white] for b in all_block_avg_data)
-                # --- UV and IR final averaging is REMOVED ---
                 
             final_data_row_dict["cv_flag"] = "OK" # Placeholder
             final_data_row_dict["avg_valid"] = True # Placeholder
@@ -617,21 +597,21 @@ class MeasurementWorker(QObject):
             as_led_off()
             as_uv_led_off()
             as_ir_led_off()
-            _control_5050_led(False)
+            self.request_led_control.emit(False)
         except Exception as e:
             self.error.emit(f"Measurement failed: {e}")
             # --- FIX: Turn off ALL LEDs on error ---
             as_led_off()
             as_uv_led_off()
             as_ir_led_off()
-            _control_5050_led(False)
+            self.request_led_control.emit(False)
             
     def stop(self):
         self._is_running = False
-# --- END MODIFIED MeasurementWorker ---
+# --- END MeasurementWorker ---
 
 
-# --- 10. Sample Selection Dialog (MODIFIED) ---
+# --- 10. Sample Selection Dialog ---
 class SampleDialog(QDialog):
     def __init__(self, palette, parent=None):
         super().__init__(parent)
@@ -676,10 +656,8 @@ class SampleDialog(QDialog):
     def load_existing_samples(self):
         self.sample_combo.clear()
         self.existing_samples = {}
-        # --- MODIFIED: Reads from the new, versioned file ---
         if os.path.exists(DATA_COLLECTION_FILE):
             try:
-                # Use utf-8-sig to handle potential BOM (Byte Order Mark)
                 with open(DATA_COLLECTION_FILE, 'r', encoding='utf-8-sig') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
@@ -793,27 +771,27 @@ class SampleDialog(QDialog):
 # --- END SampleDialog ---
 
 
-# --- Main Training Tab (MODIFIED) ---
+# --- Main Training Tab ---
 class TrainingTab(QWidget):
-    # Modified States
+    # States
     STATE_LOCKED = 0
     STATE_NEEDS_INIT = 1
     STATE_PRE_PURGE = 2
     STATE_INITIALIZING_MQ = 3
     STATE_NEEDS_DARK_REF = 4
     STATE_NEEDS_WHITE_REF = 5
-    STATE_READY_TO_MEASURE = 6 # (Was 8)
-    STATE_AWAITING_SAMPLE = 7  # (Was 9)
-    STATE_MEASURING = 8        # (Was 10)
-    STATE_SAVING = 9           # (Was 11)
-    STATE_POST_PURGE = 10      # (Was 12)
+    STATE_READY_TO_MEASURE = 6
+    STATE_AWAITING_SAMPLE = 7
+    STATE_MEASURING = 8
+    STATE_SAVING = 9
+    STATE_POST_PURGE = 10
     
-    # --- MODIFIED: Added fan_chip_handle ---
-    def __init__(self, palette, main_window, fan_chip_handle, parent=None):
+    # --- MODIFIED: Updated to accept gpio_handle ---
+    def __init__(self, palette, main_window, gpio_handle, parent=None):
         super().__init__(parent)
         self.palette = palette
         self.main_window = main_window
-        self.fan_chip = fan_chip_handle  # <-- STORE THE FAN HANDLE
+        self.gpio_handle = gpio_handle  # Shared handle for Fan & LED
         self.current_state = self.STATE_LOCKED
         self.mq_baseline = {}
         self.as_refs = {}
@@ -832,7 +810,7 @@ class TrainingTab(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # --- Lock Frame (Unchanged) ---
+        # --- Lock Frame ---
         self.lock_frame = QFrame()
         self.lock_frame.setStyleSheet(f"background-color: {palette['BG']};")
         lock_layout = QVBoxLayout(self.lock_frame)
@@ -854,7 +832,7 @@ class TrainingTab(QWidget):
         lock_layout.addWidget(self.unlock_button, 0, Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(self.lock_frame)
         
-        # --- Main Frame (Unchanged layout) ---
+        # --- Main Frame ---
         self.main_frame = QWidget()
         main_frame_layout = QGridLayout(self.main_frame)
         main_frame_layout.setContentsMargins(10, 10, 10, 10)
@@ -961,7 +939,6 @@ class TrainingTab(QWidget):
             self.status_label.setText("Dark Ref OK. Ready to capture AS7265x White Reference.")
             self.action_button.setText(" CAPTURE WHITE REF")
             self.action_button.setIcon(qta.icon('fa5s.camera', color=self.palette.get("BUTTON_TEXT", self.palette["BG"])))
-        # --- REMOVED UV_REF and IR_REF states ---
         elif state == self.STATE_READY_TO_MEASURE:
             self.status_label.setText("Initialization Complete. Ready to measure sample.")
             self.action_button.setText(" START MEASUREMENT")
@@ -998,33 +975,40 @@ class TrainingTab(QWidget):
             self.password_input.clear()
             self.password_input.setFocus()
 
-    # --- ADDED REAL _control_fan METHOD ---
+    # --- HARDWARE CONTROL METHODS ---
     def _control_fan(self, state):
-        """
-        Controls the purge fan using the SHARED lgpio handle.
-        """
-        if self.fan_chip is None:
-            self.log("Fan control skipped: Global fan_chip is None.")
+        """Controls the purge fan using the SHARED lgpio handle."""
+        if self.gpio_handle is None:
+            self.log("Fan control skipped: Global gpio_handle is None.")
             return
-        
         try:
             if state:
-                # Set 100% duty cycle
-                lgpio.tx_pwm(self.fan_chip, FAN_PIN, PWM_FREQ, 100) 
+                lgpio.tx_pwm(self.gpio_handle, FAN_PIN, PWM_FREQ, 100) 
             else:
-                # Set 0% duty cycle
-                lgpio.tx_pwm(self.fan_chip, FAN_PIN, PWM_FREQ, 0)
+                lgpio.tx_pwm(self.gpio_handle, FAN_PIN, PWM_FREQ, 0)
         except Exception as e:
             self.log(f"Fan control error (lgpio): {e}")
-    # --- END OF ADDED METHOD ---
+
+    def _control_led(self, state):
+        """Controls the 5050 LED strip using the SHARED lgpio handle."""
+        if self.gpio_handle is None:
+            return
+        try:
+            lgpio.gpio_write(self.gpio_handle, LED_PIN, 1 if state else 0)
+        except Exception as e:
+            self.log(f"LED control error: {e}")
+    
+    # Slot to receive LED control requests from MeasurementWorker
+    @Slot(bool)
+    def on_led_control_request(self, state):
+        self._control_led(state)
+    # --------------------------------
 
     def on_action_button_click(self):
-        # Modified States
         state_actions = {
             self.STATE_NEEDS_INIT: self.run_mq_baseline, 
             self.STATE_NEEDS_DARK_REF: self.run_dark_ref,
             self.STATE_NEEDS_WHITE_REF: self.run_white_ref,
-            # Removed UV/IR clicks
             self.STATE_READY_TO_MEASURE: self.run_show_sample_dialog,
         }
         action = state_actions.get(self.current_state)
@@ -1033,12 +1017,12 @@ class TrainingTab(QWidget):
 
     def run_mq_baseline(self):
         self.set_state(self.STATE_PRE_PURGE)
-        self._control_fan(True)  # <-- MODIFIED: Use real fan control
+        self._control_fan(True)
         QTimer.singleShot(10000, self.start_mq_baseline_worker)
 
     def start_mq_baseline_worker(self):
         self.log("Pre-purge complete. Stabilizing for 5s...")
-        self._control_fan(False) # <-- MODIFIED: Use real fan control
+        self._control_fan(False)
         QTimer.singleShot(5000, self.start_mq_capture)
         
     def start_mq_capture(self):
@@ -1060,7 +1044,6 @@ class TrainingTab(QWidget):
         self.baseline_thread = None
         self.mq_baseline = baseline_data
         
-        # <-- MODIFIED: Log MQ-3
         self.log(f"MQ Baseline Saved. (MQ-137 Avg: {baseline_data['baseline_mq137']:.3f} V, MQ-3 Avg: {baseline_data['baseline_mq3']:.3f} V)")
         try:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1085,15 +1068,14 @@ class TrainingTab(QWidget):
             self.baseline_thread.quit()
             self.baseline_thread.wait()
         self.baseline_thread = None
-        self._control_fan(False) # <-- MODIFIED: Use real fan control
-        # --- FIX: Turn off ALL LEDs on error ---
+        self._control_fan(False)
+        # Turn off ALL LEDs on error
         as_led_off()
         as_uv_led_off()
         as_ir_led_off()
-        _control_5050_led(False)
+        self._control_led(False)
         self.set_state(self.STATE_NEEDS_INIT)
 
-    # --- MODIFIED: run_dark_ref (Added animation + explicit LED OFF) ---
     def run_dark_ref(self):
         show_custom_message(self, "Action Required",
             "Place the **Dark Reference Cap** (or completely cover the sensor) to ensure **NO light** is reaching it.\n\nClick OK when ready.",
@@ -1103,7 +1085,7 @@ class TrainingTab(QWidget):
             self, "Capturing...", "Acquiring dark reference...", "processing", self.palette
         )
         processing_dialog.show()
-        QApplication.processEvents() # Force UI update
+        QApplication.processEvents()
             
         try:
             self.log("Capturing dark reference... ALL LEDs OFF.")
@@ -1111,23 +1093,20 @@ class TrainingTab(QWidget):
             as_led_off()
             as_uv_led_off() 
             as_ir_led_off() 
-            _control_5050_led(False) 
+            self._control_led(False) 
             
-            time.sleep(2.0) # Allow any residual light/phosphor glow to fade
+            time.sleep(2.0) 
             
-            # --- CRITICAL FIX: pass leds_on=False ---
             self.as_refs["dark_ref"] = read_spectrometer(leds_on=False)
-            # ----------------------------------------
             
-            processing_dialog.accept() # Close dialog on success
+            processing_dialog.accept()
             self.log("Dark Reference captured (LEDs remained OFF).")
             self.set_state(self.STATE_NEEDS_WHITE_REF) 
         
         except (UninitializedAS7265XError, Exception) as e:
-            processing_dialog.accept() # Close dialog on failure
+            processing_dialog.accept()
             self.on_initialization_error(f"Failed to capture dark ref: {e}")
 
-    # --- MODIFIED: run_white_ref (Added animation, merged IR logic) ---
     def run_white_ref(self):
         show_custom_message(self, "Action Required",
             "Place the **White Reference Tile** directly over the sensor lens.\n\nEnsure it is flat and covering the entire sensor. Click OK when ready.",
@@ -1137,26 +1116,24 @@ class TrainingTab(QWidget):
             self, "Capturing...", "Acquiring white reference...", "processing", self.palette
         )
         processing_dialog.show()
-        QApplication.processEvents() # Force UI update
+        QApplication.processEvents()
             
         try:
             self.log("Capturing white reference...")
-            # --- Turn off other LEDs just in case ---
             as_uv_led_off()
             as_ir_led_off()
-            # --- Turn on white LEDs ---
-            _control_5050_led(True) 
+            # Turn ON 5050 LED + AS7265x White LEDs
+            self._control_led(True) 
             as_led_on()
             time.sleep(2.0)
             
-            # --- MODIFIED: Calls the new, safe read_spectrometer() ---
             self.as_refs["white_ref"] = read_spectrometer()
             
+            # Turn OFF LEDs
             as_led_off()
-            _control_5050_led(False)
+            self._control_led(False)
             self.log("White Reference captured.")
 
-            # --- Start of logic moved from old run_ir_ref ---
             self.as_refs["timestamp"] = datetime.now().isoformat()
             
             with open(AS_REFS_FILE, 'w') as f:
@@ -1171,46 +1148,36 @@ class TrainingTab(QWidget):
             row_to_write["baseline_mq137"] = _get_with_nan(self.mq_baseline, "baseline_mq137")
             row_to_write["baseline_mq135"] = _get_with_nan(self.mq_baseline, "baseline_mq135")
             row_to_write["baseline_mq4"] = _get_with_nan(self.mq_baseline, "baseline_mq4")
-            row_to_write["baseline_mq3"] = _get_with_nan(self.mq_baseline, "baseline_mq3") # <-- Corrected
+            row_to_write["baseline_mq3"] = _get_with_nan(self.mq_baseline, "baseline_mq3")
             
             dark_ref_data = self.as_refs.get("dark_ref", {})
             white_ref_data = self.as_refs.get("white_ref", {})
-            # --- UV and IR data removed ---
 
             for i in range(1, 19):
                 key_from = f"AS7265X_ch{i}"
                 row_to_write[f"as_dark_ref_ch{i}"] = _get_with_nan(dark_ref_data, key_from)
                 row_to_write[f"as_white_ref_ch{i}"] = _get_with_nan(white_ref_data, key_from)
-                # --- UV and IR ref writing removed ---
 
-            # --- MODIFIED: Writes to new, versioned file ---
             file_exists = os.path.exists(BASELINE_COLLECTION_FILE)
             with open(BASELINE_COLLECTION_FILE, 'a', newline='') as f:
-                # Use the new, simplified header
                 writer = csv.DictWriter(f, fieldnames=BASELINE_HEADER)
                 if not file_exists:
                     writer.writeheader()
-                # Filter row_to_write to only include keys in BASELINE_HEADER
                 filtered_row = {h: _get_with_nan(row_to_write, h) for h in BASELINE_HEADER}
                 writer.writerow(filtered_row)
             
             self.log(f"Full Baseline (MQ+AS) appended to {os.path.basename(BASELINE_COLLECTION_FILE)}")
             
-            processing_dialog.accept() # Close dialog on success
+            processing_dialog.accept()
             self.set_state(self.STATE_READY_TO_MEASURE)
-            # --- End of moved logic ---
 
         except (UninitializedAS7265XError, Exception) as e:
-            processing_dialog.accept() # Close dialog on failure
+            processing_dialog.accept()
             as_led_off()
-            _control_5050_led(False)
+            self._control_led(False)
             self.on_initialization_error(f"Failed to capture/save white ref: {e}")
-    # --- END MODIFICATION ---
-
-    # --- DELETED run_uv_ref and run_ir_ref ---
         
     def run_show_sample_dialog(self):
-        # (Unchanged)
         dialog = SampleDialog(self.palette, self)
         if dialog.exec():
             self.current_sample = dialog.get_sample_info()
@@ -1220,7 +1187,6 @@ class TrainingTab(QWidget):
             self.log("Sample selection cancelled.")
 
     def show_handling_instructions(self):
-        # (Unchanged)
         storage = self.current_sample.get("storage", "Room")
         title = "Sample Preparation"
         message = ""
@@ -1256,7 +1222,6 @@ class TrainingTab(QWidget):
             self.set_state(self.STATE_READY_TO_MEASURE)
 
     def run_measurement(self):
-        # (Unchanged)
         self.set_state(self.STATE_MEASURING)
         self.log("Starting measurement...")
         
@@ -1267,12 +1232,13 @@ class TrainingTab(QWidget):
         self.measurement_worker.update_status.connect(self.log)
         self.measurement_worker.measurement_complete.connect(self.on_measurement_complete)
         self.measurement_worker.error.connect(self.on_measurement_error)
+        # Connect LED control signal from worker to main thread slot
+        self.measurement_worker.request_led_control.connect(self.on_led_control_request)
         
         self.measurement_thread.started.connect(self.measurement_worker.run)
         self.measurement_thread.start()
 
     def on_measurement_error(self, error_message):
-        # (Unchanged)
         self.log(f"ERROR: {error_message}")
         show_custom_message(self, "Measurement Error", error_message, "error", self.palette)
         if self.measurement_thread and self.measurement_thread.isRunning():
@@ -1280,10 +1246,10 @@ class TrainingTab(QWidget):
             self.measurement_thread.quit()
             self.measurement_thread.wait()
         self.measurement_thread = None
+        self._control_led(False) # Ensure off on error
         self.set_state(self.STATE_READY_TO_MEASURE)
 
     def on_measurement_complete(self, final_data_row_dict):
-        # (Unchanged)
         if self.measurement_thread and self.measurement_thread.isRunning():
             self.measurement_thread.quit()
             self.measurement_thread.wait()
@@ -1317,14 +1283,12 @@ class TrainingTab(QWidget):
             self.set_state(self.STATE_READY_TO_MEASURE)
 
     def save_final_row(self, final_data_row_dict):
-        # (Unchanged)
         self.log(f"Saving final row for {final_data_row_dict['sample_id']}...")
         try:
             row_to_write = {}
             for header in CANONICAL_HEADER:
                 row_to_write[header] = _get_with_nan(final_data_row_dict, header)
 
-            # --- MODIFIED: Writes to new, versioned file ---
             file_exists = os.path.exists(DATA_COLLECTION_FILE)
             with open(DATA_COLLECTION_FILE, 'a', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER)
@@ -1347,7 +1311,7 @@ class TrainingTab(QWidget):
             show_custom_message(self, "Measurement Complete", post_message, "info", self.palette)
             
             self.log("Starting 15s post-measurement purge... Fan ON.")
-            self._control_fan(True) # <-- MODIFIED: Use real fan control
+            self._control_fan(True)
             self.set_state(self.STATE_POST_PURGE)
             QTimer.singleShot(15000, self.on_post_purge_complete)
             
@@ -1358,13 +1322,11 @@ class TrainingTab(QWidget):
 
     @Slot()
     def on_post_purge_complete(self):
-        # (Unchanged)
         self.log("Post-purge complete. Fan OFF.")
-        self._control_fan(False) # <-- MODIFIED: Use real fan control
+        self._control_fan(False)
         self.set_state(self.STATE_READY_TO_MEASURE)
 
     def _ask_for_csv_file(self):
-        # (Unchanged)
         dialog = QDialog(self)
         dialog.setWindowTitle("Select Data File")
         dialog.setStyleSheet(f"QDialog {{ background-color: {self.palette['SECONDARY_BG']}; padding: 20px; }}")
@@ -1388,7 +1350,6 @@ class TrainingTab(QWidget):
         btn_layout.addWidget(btn_main)
         layout.addLayout(btn_layout)
         
-        # --- MODIFIED: Point buttons to the new, versioned files ---
         btn_main.clicked.connect(lambda: (setattr(dialog, 'choice', (DATA_COLLECTION_FILE, "Main Data")), dialog.accept()))
         btn_raw.clicked.connect(lambda: (setattr(dialog, 'choice', (RAW_BLOCK_DATA_FILE, "Raw Block Data")), dialog.accept()))
         btn_baseline.clicked.connect(lambda: (setattr(dialog, 'choice', (BASELINE_COLLECTION_FILE, "Baseline Data")), dialog.accept()))
@@ -1398,7 +1359,6 @@ class TrainingTab(QWidget):
         return getattr(dialog, 'choice', (None, None))
 
     def show_csv_viewer(self):
-        # (Unchanged)
         file_path, file_name = self._ask_for_csv_file()
         if not file_path:
             return
@@ -1411,7 +1371,6 @@ class TrainingTab(QWidget):
             show_custom_message(self, "Error", f"Could not open CSV viewer: {e}", "error", self.palette)
 
     def stop_all_workers(self):
-        # (Unchanged)
         if self.baseline_thread and self.baseline_thread.isRunning():
             self.log("Stopping MQ Baseline worker...")
             self.baseline_worker.stop()
@@ -1431,9 +1390,10 @@ class TrainingTab(QWidget):
         self.measurement_worker = None
 
     def exit_training_mode(self):
-        # (Unchanged)
         self.log("Exiting Training Mode...")
         self.stop_all_workers()
+        self._control_fan(False)
+        self._control_led(False)
         self.log_display.clear()
         self.password_input.clear()
         self.set_state(self.STATE_LOCKED) 
@@ -1441,13 +1401,11 @@ class TrainingTab(QWidget):
         print("Switched to Settings tab.")
 
     def email_csv_file(self):
-        # (Unchanged)
         recipient_email = self.email_input.text().strip()
         if not re.match(r"[^@]+@[^@]+\.[^@]+", recipient_email):
             show_custom_message(self, "Invalid Email", "Please enter a valid recipient email address.", "warning", self.palette)
             return
         
-        # --- MODIFIED: Point map to the new, versioned files ---
         file_map = {
             "Main Data": DATA_COLLECTION_FILE,
             "Raw Block Data": RAW_BLOCK_DATA_FILE,
@@ -1545,7 +1503,6 @@ class TrainingTab(QWidget):
 
     @Slot(str)
     def on_email_success(self, message):
-        # (Unchanged)
         if self.processing_dialog:
             self.processing_dialog.accept()
         self.processing_dialog = None
@@ -1556,7 +1513,6 @@ class TrainingTab(QWidget):
 
     @Slot(str, str)
     def on_email_error(self, title, message):
-        # (Unchanged)
         if self.processing_dialog:
             self.processing_dialog.accept()
         self.processing_dialog = None
@@ -1566,8 +1522,8 @@ class TrainingTab(QWidget):
         self.log(f"Email Error: {message}")
 
 
-# --- 7. MODIFIED create_training_tab TO ACCEPT 4 ARGUMENTS ---
-def create_training_tab(tab_control, palette, main_window, fan_chip_handle):
+# --- MODIFIED create_training_tab TO ACCEPT gpio_handle ---
+def create_training_tab(tab_control, palette, main_window, gpio_handle):
     """Creates the Training tab."""
-    container = TrainingTab(palette, main_window, fan_chip_handle)
+    container = TrainingTab(palette, main_window, gpio_handle)
     return container
