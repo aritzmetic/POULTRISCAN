@@ -5,6 +5,7 @@ import os
 import csv
 import time
 import qtawesome as qta
+import lgpio  
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -19,15 +20,19 @@ from PySide6.QtGui import QFont, QColor
 from custom_dialog import show_custom_message
 
 report_file = "poultri_scan_report.csv"
-DATABASE_LOG_FILE = "raw_database_log.csv" 
+DATABASE_LOG_FILE = "raw_database_log.csv"
 current_sample_id = None
-# SPECTROMETER_PLACEHOLDER is imported from as7265x
+
+FAN_PIN = 27
+PWM_FREQ = 100
+PURGE_DURATION_MS = 8000 # 8 seconds
 
 # --- UPDATED IMPORTS ---
 try:
     from Sensors.as7265x import read_all_sensors, SPECTROMETER_PLACEHOLDER
     from Sensors.data_model import calculate_group_scores, calculate_overall_quality
 except ImportError as e:
+    # ... (Error handling unchanged) ...
     print("="*50)
     print(f"FATAL ERROR: Could not import sensor/data modules.")
     print(f"Error: {e}")
@@ -50,6 +55,7 @@ except ImportError as e:
 
 
 class SensorWorker(QObject):
+    # ... (Unchanged) ...
     finished = Signal(dict)
     error = Signal(str)
     
@@ -64,7 +70,8 @@ class SensorWorker(QObject):
 
 class DashboardTab(QWidget):
 
-    def __init__(self, palette, sample_type_prefix, parent=None):
+    # <-- 1. MODIFY __init__ TO ACCEPT THE FAN CHIP ---
+    def __init__(self, palette, sample_type_prefix, fan_chip_handle, parent=None):
         super().__init__(parent)
 
         self._score_kpi_value = 0 
@@ -89,16 +96,23 @@ class DashboardTab(QWidget):
         self.NORMAL_COLOR = palette["NORMAL_COLOR"] 
         self.btn_run_icon_color = self.palette.get("BUTTON_TEXT", self.palette["BG"])
         self.btn_clear_icon_color = self.palette.get("UNSELECTED_TEXT", "#555760")
+        
+        # <-- 2. SET FAN CHIP FROM PARENT ---
+        self.fan_chip = fan_chip_handle 
+        
+        self.purge_timer = QTimer(self) 
+        self.purge_timer.setSingleShot(True)
+        self.purge_timer.timeout.connect(self.on_purge_complete)
 
-        # --- Main Layout ---
+        # --- Main Layout (Unchanged from 7-inch version) ---
         page_layout = QVBoxLayout(self) 
         page_layout.setContentsMargins(0, 0, 0, 0)
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_content = QWidget()
         main_layout = QGridLayout(scroll_content)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(5, 5, 5, 5) 
+        main_layout.setSpacing(10) 
 
         # --- A. CONTROL CARD (Row 0, Span 2) ---
         control_card, control_frame = self._create_card(scroll_content, " Test Control & Status", icon_name="fa5s.gamepad")
@@ -107,15 +121,15 @@ class DashboardTab(QWidget):
         control_layout.addWidget(QLabel("Sample Type:"), 0, 0, Qt.AlignmentFlag.AlignLeft)
         self.sample_type_combobox = QComboBox()
         self.sample_type_combobox.addItems(list(sample_type_prefix.keys()))
-        self.sample_type_combobox.setFixedWidth(300) 
+        self.sample_type_combobox.setFixedWidth(200) 
         control_layout.addWidget(self.sample_type_combobox, 0, 1)
         control_layout.addWidget(QLabel("Sample ID:"), 0, 2, Qt.AlignmentFlag.AlignRight)
         self.sample_id_label = QLabel("PS-INIT-0000")
-        self.sample_id_label.setStyleSheet(f"font: bold 20pt 'Bahnschrift'; color: {self.ACCENT_COLOR};") 
+        self.sample_id_label.setStyleSheet(f"font: bold 12pt 'Bahnschrift'; color: {self.ACCENT_COLOR};") 
         control_layout.addWidget(self.sample_id_label, 0, 3, Qt.AlignmentFlag.AlignLeft)
         self.status_light = QLabel()
-        self.status_light.setFixedSize(25, 18) 
-        self.status_light.setStyleSheet(f"background-color: {self.UNSELECTED_TEXT}; border-radius: 9px;") 
+        self.status_light.setFixedSize(15, 12) 
+        self.status_light.setStyleSheet(f"background-color: {self.UNSELECTED_TEXT}; border-radius: 6px;") 
         control_layout.addWidget(self.status_light, 0, 4, Qt.AlignmentFlag.AlignLeft)
         control_layout.setColumnStretch(5, 1)
         self.btn_run = QPushButton(" RUN TEST")
@@ -126,19 +140,16 @@ class DashboardTab(QWidget):
         self.btn_clear.setObjectName("secondary")
         self.btn_clear.clicked.connect(self.clear_dashboard)
         control_layout.addWidget(self.btn_clear, 0, 7)
-
         # --- B. MAIN CONTENT FRAME (Row 1, Span 2) ---
         main_content_frame = QWidget()
         main_content_layout = QGridLayout(main_content_frame)
-        main_content_layout.setSpacing(15)
+        main_content_layout.setSpacing(10) 
         main_layout.addWidget(main_content_frame, 1, 0, 1, 2)
-
         # --- B.1. SCORE AND CATEGORY FRAME ---
         score_category_frame = QWidget()
         score_category_layout = QGridLayout(score_category_frame)
-        score_category_layout.setSpacing(15)
+        score_category_layout.setSpacing(10) 
         main_content_layout.addWidget(score_category_frame, 0, 0, 1, 2)
-
         # 1. Overall Score Card
         self.score_border_frame, overall_frame_g = self._create_card(score_category_frame, " PoultriScan Quality Score", icon_name="fa5s.tachometer-alt")
         self.score_border_frame.setStyleSheet(f"QWidget[objectName=\"card\"] {{ border: 2px solid {self.UNSELECTED_TEXT}; }}")
@@ -148,13 +159,13 @@ class DashboardTab(QWidget):
         score_kpi_frame.setStyleSheet(f"background-color: {self.BORDER_COLOR}; border-radius: 5px;")
         score_kpi_layout = QVBoxLayout(score_kpi_frame)
         self.score_display = QLabel("--")
-        self.score_display.setFont(QFont("Bahnschrift", 64, QFont.Weight.Bold)) 
+        self.score_display.setFont(QFont("Bahnschrift", 36, QFont.Weight.Bold)) 
         self.score_display.setStyleSheet(f"color: {self.UNSELECTED_TEXT}; background-color: transparent;")
         self.score_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
         score_kpi_layout.addWidget(self.score_display)
         overall_layout.addWidget(score_kpi_frame)
         self.quality_label = QLabel("AWAITING SCAN")
-        self.quality_label.setFont(QFont("Bahnschrift", 20, QFont.Weight.Bold)) 
+        self.quality_label.setFont(QFont("Bahnschrift", 12, QFont.Weight.Bold)) 
         self.quality_label.setStyleSheet(f"color: {self.UNSELECTED_TEXT};")
         self.quality_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         overall_layout.addWidget(self.quality_label)
@@ -163,27 +174,21 @@ class DashboardTab(QWidget):
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setValue(0)
         overall_layout.addWidget(self.progress_bar)
-
         # 2. Group Index Cards (Rearranged into a 2x2 grid)
         self.index_refs['enose'] = self._create_index_card(score_category_frame, " eNose VOC Index", 0, 1, "fa5s.wind")
         self.index_refs['whc'] = self._create_index_card(score_category_frame, " WHC Index", 0, 2, "fa5s.water")     
         self.index_refs['fac'] = self._create_index_card(score_category_frame, " FAC Index", 1, 1, "fa5s.flask")     
         self.index_refs['myo'] = self._create_index_card(score_category_frame, " Myoglobin Index", 1, 2, "fa5s.tint") 
-        
         score_category_layout.setColumnStretch(0, 2) 
         score_category_layout.setColumnStretch(1, 1) 
         score_category_layout.setColumnStretch(2, 1) 
         score_category_layout.setColumnStretch(3, 0) 
-
-
         # --- C. RAW SENSOR DATA CONTAINER ---
         raw_data_card, raw_data_container = self._create_card(main_content_frame, " Raw Sensor Readings", icon_name="fa5s.wave-square")
         main_content_layout.addWidget(raw_data_card, 1, 0, 1, 2)
         raw_data_layout = QGridLayout(raw_data_container)
-        raw_data_layout.setSpacing(15)
-
-        data_font = QFont("Bahnschrift", 16) 
-
+        raw_data_layout.setSpacing(10) 
+        data_font = QFont("Bahnschrift", 9) 
         # C.1. Environmental Card
         env_card, env_frame = self._create_card(raw_data_container, " AHT20 (Environment)", icon_name="fa5s.thermometer-half")
         raw_data_layout.addWidget(env_card, 0, 0)
@@ -196,7 +201,6 @@ class DashboardTab(QWidget):
         env_layout.addWidget(humidity_label)
         self.raw_label_refs["Temperature"] = temp_label
         self.raw_label_refs["Humidity"] = humidity_label
-
         # C.2. Spectrometer Card
         spec_card, spec_frame = self._create_card(raw_data_container, " AS7265X (Spectrometry)", icon_name="fa5s.palette")
         raw_data_layout.addWidget(spec_card, 0, 1)
@@ -213,7 +217,6 @@ class DashboardTab(QWidget):
         self.raw_label_refs["WHC Index"] = whc_raw_label
         self.raw_label_refs["Fatty Acid Profile"] = fac_raw_label
         self.raw_label_refs["Myoglobin"] = myo_raw_label 
-
         # C.3. eNose Card
         enose_raw_card, enose_raw_frame = self._create_card(raw_data_container, " eNose (VOCs)", icon_name="fa5s.cloud")
         raw_data_layout.addWidget(enose_raw_card, 0, 2)
@@ -221,7 +224,7 @@ class DashboardTab(QWidget):
         mq_sensors_data = [
             ("MQ-137 (Ammonia)", "NH₃ (Ammonia): N/A V"),
             ("MQ-135 (Air Quality)", "Air Quality: N/A V"),
-            ("MQ-7 (CO)", "CO: N/A V"),
+            ("MQ-3 (Alcohol)", "Alcohol: N/A V"),
             ("MQ-4 (Methane)", "CH₄: N/A V"),
         ]
         for i, (key, initial_text) in enumerate(mq_sensors_data):
@@ -229,13 +232,17 @@ class DashboardTab(QWidget):
             label.setFont(data_font) 
             enose_layout.addWidget(label, i // 2, i % 2)
             self.raw_label_refs[key] = label
-
+        
         main_layout.setRowStretch(1, 1)
         scroll_area.setWidget(scroll_content)
         page_layout.addWidget(scroll_area)
+        
         self.btn_run.clicked.connect(self.run_test)
         self.clear_dashboard()
-
+        
+        # <-- 3. REMOVED CALL TO self.initialize_fan() ---
+        
+    # ... (_create_card, _create_index_card are unchanged, omitted for brevity) ...
     def get_score_kpi_value(self):
         return self._score_kpi_value
     def set_score_kpi_value(self, value):
@@ -247,15 +254,15 @@ class DashboardTab(QWidget):
         card_frame = QWidget(parent)
         card_frame.setObjectName("card")
         card_layout = QVBoxLayout(card_frame)
-        card_layout.setContentsMargins(15, 15, 15, 15)
+        card_layout.setContentsMargins(10, 10, 10, 10) 
         title_frame = QWidget()
         title_layout = QHBoxLayout(title_frame)
         title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(10)
+        title_layout.setSpacing(5) 
         if icon_name:
             icon = qta.icon(icon_name, color=self.palette["ACCENT"])
             icon_label = QLabel()
-            icon_label.setPixmap(icon.pixmap(QSize(35, 35))) 
+            icon_label.setPixmap(icon.pixmap(QSize(20, 20))) 
             icon_label.setStyleSheet("background-color: transparent;")
             title_layout.addWidget(icon_label)
         title_label = QLabel(title)
@@ -268,7 +275,6 @@ class DashboardTab(QWidget):
         card_layout.addWidget(content_frame)
         return card_frame, content_frame
 
-
     def _create_index_card(self, parent, title, row, col, icon_name=None):
         card, content = self._create_card(parent, title, icon_name=icon_name)
         parent.layout().addWidget(card, row, col)
@@ -276,7 +282,7 @@ class DashboardTab(QWidget):
         content_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ref = {}
         ref['label'] = QLabel("--")
-        ref['label'].setFont(QFont("Bahnschrift", 30, QFont.Weight.Bold)) 
+        ref['label'].setFont(QFont("Bahnschrift", 16, QFont.Weight.Bold)) 
         ref['label'].setStyleSheet(f"color: {self.UNSELECTED_TEXT};")
         ref['label'].setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(ref['label'])
@@ -287,6 +293,28 @@ class DashboardTab(QWidget):
         content_layout.addWidget(ref['bar'])
         return ref
 
+    # <-- 4. REMOVED 'cleanup' METHOD ---
+    # <-- 5. REMOVED 'initialize_fan' METHOD ---
+    # <-- 6. REMOVED 'release_fan' METHOD ---
+            
+    # <-- 7. SIMPLIFY '_control_fan' ---
+    def _control_fan(self, state):
+        """Controls the purge fan using the SHARED lgpio handle."""
+        if self.fan_chip is None:
+            print("DashboardTab Fan control skipped: Global fan_chip is None.")
+            return
+            
+        try:
+            if state:
+                lgpio.tx_pwm(self.fan_chip, FAN_PIN, PWM_FREQ, 100) 
+                print("DashboardTab: FAN ON")
+            else:
+                lgpio.tx_pwm(self.fan_chip, FAN_PIN, PWM_FREQ, 0)
+                print("DashboardTab: FAN OFF")
+        except Exception as e:
+            print(f"DashboardTab Fan control error (lgpio): {e}")
+
+    # ... (Data saving and UI animation methods unchanged, omitted for brevity) ...
     def _get_new_sample_id(self, sample_type):
         prefix = self.sample_type_prefix[sample_type] 
         id_prefix_str = f"PS-{prefix}_" 
@@ -312,7 +340,7 @@ class DashboardTab(QWidget):
         column_names = [
             "Timestamp", "Sample ID", "Type",
             "Temperature", "Humidity", "WHC Index", "Fatty Acid Profile", "Myoglobin", 
-            "MQ-137 (Ammonia)", "MQ-135 (Air Quality)", "MQ-7 (CO)", "MQ-4 (Methane)", "Quality"
+            "MQ-137 (Ammonia)", "MQ-135 (Air Quality)", "MQ-3 (Alcohol)", "MQ-4 (Methane)", "Quality"
         ]
         try:
             with open(report_file, "a", newline="") as f:
@@ -326,25 +354,12 @@ class DashboardTab(QWidget):
         except Exception as e:
             show_custom_message(self, "Data Save Error", f"Report save failed: {e}", "error", self.palette)
 
-    # --- MODIFIED: Function to save all 54 channels to database log ---
     def save_to_database_log(self, sample_id, raw_readings):
-        """
-        Saves a clean, raw sensor data row to a separate CSV
-        file designed to match the database's tbl_reading.
-        This now saves all 54 spectral channels.
-        """
-        
-        # --- MODIFIED: Expanded header for all 54 spectral channels ---
         header = (
-            ['sample_id', 'temp', 'hum', 'mq_137', 'mq_135', 'mq_4', 'mq_7'] +
-            [f'as7265x_ch{i+1}' for i in range(18)] + # White
-            [f'as_uv_ch{i+1}' for i in range(18)] +   # UV
-            [f'as_ir_ch{i+1}' for i in range(18)]    # IR
+            ['sample_id', 'temp', 'hum', 'mq_137', 'mq_135', 'mq_4', 'mq_3'] +
+            [f'as7265x_ch{i+1}' for i in range(18)] # 18 channels
         )
-        # --- END MODIFICATION ---
-        
         try:
-            # --- MODIFIED: Map all data to the new header ---
             data_row = [
                 sample_id,
                 raw_readings.get('Temperature', 'N/A'),
@@ -352,39 +367,20 @@ class DashboardTab(QWidget):
                 raw_readings.get('MQ-137 (Ammonia)', 'N/A'),
                 raw_readings.get('MQ-135 (Air Quality)', 'N/A'),
                 raw_readings.get('MQ-4 (Methane)', 'N/A'),
-                raw_readings.get('MQ-7 (CO)', 'N/A'),
+                raw_readings.get('MQ-3 (Alcohol)', 'N/A'),
             ]
-            
-            # Add all 18 WHITE channels
             for i in range(18):
-                key = f'AS7265X_ch{i+1}' # Key from sensor file is uppercase 'AS7265X'
+                key = f'AS7265X_ch{i+1}' # Key from sensor file
                 data_row.append(raw_readings.get(key, 'N/A'))
-            
-            # Add all 18 UV channels
-            for i in range(18):
-                key = f'AS_UV_ch{i+1}'
-                data_row.append(raw_readings.get(key, 'N/A'))
-
-            # Add all 18 IR channels
-            for i in range(18):
-                key = f'AS_IR_ch{i+1}'
-                data_row.append(raw_readings.get(key, 'N/A'))
-            # --- END MODIFICATION ---
-            
             file_exists = os.path.exists(DATABASE_LOG_FILE)
-            
             with open(DATABASE_LOG_FILE, "a", newline="") as f:
                 writer = csv.writer(f)
                 if not file_exists:
                     writer.writerow(header) # Write header only if file is new
                 writer.writerow(data_row)
-        
         except Exception as e:
-            # Show an error but don't crash the main app
             print(f"CRITICAL: Failed to write to database log: {e}")
             show_custom_message(self, "DB Log Error", f"Failed to save raw database log:\n{e}", "error", self.palette)
-    # --- END MODIFICATION ---
-    
     
     def pulse_feedback(self, widget, original_color, count):
         if count > 0:
@@ -405,15 +401,15 @@ class DashboardTab(QWidget):
     def animate_streaming_text(self):
         self.stream_dot_count += 1
         dots = " ." * (self.stream_dot_count % 3 + 1)
-        text = f"SCANNING{dots:<4}" # <-- MODIFIED TEXT
+        text = f"SCANNING{dots:<4}"
         for key in self.raw_label_refs:
             current_text = self.raw_label_refs[key].text().split(':')[0]
             self.raw_label_refs[key].setText(f"{current_text}: {text}")
             self.raw_label_refs[key].setStyleSheet(f"color: {self.PRIMARY_COLOR};")
         if self.stream_dot_count % 2 == 0:
-            self.status_light.setStyleSheet(f"background-color: {self.ACCENT_COLOR}; border-radius: 9px;")
+            self.status_light.setStyleSheet(f"background-color: {self.ACCENT_COLOR}; border-radius: 6px;") 
         else:
-            self.status_light.setStyleSheet(f"background-color: {self.PRIMARY_COLOR}; border-radius: 9px;")
+            self.status_light.setStyleSheet(f"background-color: {self.PRIMARY_COLOR}; border-radius: 6px;") 
 
     def animate_progress_bar(self, bar_widget, value):
         style_id = "red"
@@ -432,20 +428,36 @@ class DashboardTab(QWidget):
     
     @Slot(dict)
     def update_gui_and_archive(self, raw_readings):
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(100)
+        # Stop "Scanning" UIs
+        self.progress_bar.setRange(0, 100) # Set to determinate
+        self.progress_bar.setValue(100)    # Show 100% complete
         self.streaming_timer.stop()
+
         if self.scan_animation:
             self.scan_animation.stop()
         self.btn_run.setIcon(qta.icon('fa5s.play', color=self.btn_run_icon_color))
+        
+        # --- START PURGE STATE ---
+        # Buttons remain DISABLED
+        self.quality_label.setText(f"PURGING ({PURGE_DURATION_MS // 1000}s)...")
+        self.quality_label.setStyleSheet(f"color: {self.PRIMARY_COLOR};")
+        self.status_light.setStyleSheet(f"background-color: {self.PRIMARY_COLOR}; border-radius: 6px;") 
+        self.progress_bar.setRange(0, 0) # Set to indeterminate (spinner)
+        
+        print(f"Starting {PURGE_DURATION_MS}ms post-scan purge...")
+        self._control_fan(True)
+        self.purge_timer.start(PURGE_DURATION_MS)
+        # --- END PURGE STATE ---
 
         try:
+            # Calculate scores
             enose_index, whc_index, fac_index, myoglobin_index, final_score = calculate_group_scores(raw_readings)
             quality_category, color_tag, score = calculate_overall_quality(final_score)
         except Exception as e:
             self.handle_scan_error(f"Failed during score calculation: {e}\nCheck data_model.py and raw sensor keys.")
             return
 
+        # --- Update UI with results (while purging) ---
         final_color = self.DANGER_COLOR
         if color_tag == 'high': final_color = self.SUCCESS_COLOR
         elif color_tag == 'normal': final_color = self.NORMAL_COLOR
@@ -458,11 +470,13 @@ class DashboardTab(QWidget):
         self.anim_score.setEasingCurve(QEasingCurve.OutCubic)
         self.anim_score.start(QAbstractAnimation.DeleteWhenStopped)
         self.pulse_border_color(self.score_border_frame, final_color, 7)
-        def _update_quality_label():
-            self.quality_label.setText(f"[ {quality_category} ]")
+        
+        def _update_quality_label_with_result():
+            self.quality_label.setText(f"[ {quality_category} ] - PURGING...")
             self.quality_label.setStyleSheet(f"color: {final_color};")
             self.pulse_feedback(self.quality_label, final_color, 8)
-        QTimer.singleShot(300, _update_quality_label)
+        QTimer.singleShot(300, _update_quality_label_with_result)
+
         def _update_index_cards():
             self.index_refs['enose']['label'].setText(f"{enose_index}")
             self.index_refs['enose']['label'].setStyleSheet(f"color: {final_color};")
@@ -483,19 +497,16 @@ class DashboardTab(QWidget):
                 label.setStyleSheet(f"color: {self.TEXT_COLOR};") 
             self.raw_label_refs["Temperature"].setText(f"Temperature: {raw_readings.get('Temperature', 0):.1f} °C")
             self.raw_label_refs["Humidity"].setText(f"Humidity: {raw_readings.get('Humidity', 0):.1f} % RH")
-            
             self.raw_label_refs["MQ-137 (Ammonia)"].setText(f"NH₃ (Ammonia): {raw_readings.get('MQ-137 (Ammonia)', 0):.3f} V")
             self.raw_label_refs["MQ-135 (Air Quality)"].setText(f"Air Quality: {raw_readings.get('MQ-135 (Air Quality)', 0):.3f} V")
-            self.raw_label_refs["MQ-7 (CO)"].setText(f"CO: {raw_readings.get('MQ-7 (CO)', 0):.3f} V")
+            self.raw_label_refs["MQ-3 (Alcohol)"].setText(f"Alcohol: {raw_readings.get('MQ-3 (Alcohol)', 0):.3f} V")
             self.raw_label_refs["MQ-4 (Methane)"].setText(f"CH₄ (Methane): {raw_readings.get('MQ-4 (Methane)', 0):.3f} V")
-            
             whc_text = f"WHC Index: {whc_val}"
             fac_text = f"FAC Index: {fac_val}"
             myo_text = f"Myoglobin Index: {myo_val}"
             self.raw_label_refs["WHC Index"].setText(whc_text)
             self.raw_label_refs["Fatty Acid Profile"].setText(fac_text)
             self.raw_label_refs["Myoglobin"].setText(myo_text)
-        
         QTimer.singleShot(700, lambda: _update_raw_labels(whc_index, fac_index, myoglobin_index))
 
         def _show_archive_dialog():
@@ -537,7 +548,7 @@ class DashboardTab(QWidget):
                     myoglobin_index,
                     raw_readings.get("MQ-137 (Ammonia)", 'N/A'),
                     raw_readings.get("MQ-135 (Air Quality)", 'N/A'),
-                    raw_readings.get("MQ-7 (CO)", 'N/A'),
+                    raw_readings.get("MQ-3 (Alcohol)", 'N/A'),
                     raw_readings.get("MQ-4 (Methane)", 'N/A')
                 ]
                 
@@ -545,13 +556,31 @@ class DashboardTab(QWidget):
                 self.save_to_database_log(sid, raw_readings) 
 
                 show_custom_message(self, "Archival Success", f"Test data archived as {sid}", "success", self.palette)
-
-            self.btn_run.setEnabled(True)
-            self.btn_clear.setEnabled(True)
-            self.btn_clear.setIcon(qta.icon('fa5s.broom', color=self.btn_clear_icon_color))
+            
         QTimer.singleShot(1200, _show_archive_dialog)
 
 
+    
+    @Slot()
+    def on_purge_complete(self):
+        """Called by QTimer to stop fan and re-enable UI."""
+        print("Post-scan purge complete.")
+        self._control_fan(False)
+        
+        # Reset UI to "Ready" state
+        self.quality_label.setText("AWAITING SCAN")
+        self.quality_label.setStyleSheet(f"color: {self.UNSELECTED_TEXT};")
+        self.status_light.setStyleSheet(f"background-color: {self.UNSELECTED_TEXT}; border-radius: 6px;") 
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+
+        # Re-enable buttons
+        self.btn_run.setEnabled(True)
+        self.btn_clear.setEnabled(True)
+        self.btn_clear.setIcon(qta.icon('fa5s.broom', color=self.btn_clear_icon_color))
+
+
+    
     @Slot(str)
     def handle_scan_error(self, error_message):
         self.streaming_timer.stop()
@@ -564,29 +593,41 @@ class DashboardTab(QWidget):
         self.score_display.setStyleSheet(f"color: {self.DANGER_COLOR}; background-color: transparent;")
         self.quality_label.setText("SENSOR ERROR")
         self.quality_label.setStyleSheet(f"color: {self.DANGER_COLOR};")
-        self.status_light.setStyleSheet(f"background-color: {self.DANGER_COLOR}; border-radius: 9px;")
+        self.status_light.setStyleSheet(f"background-color: {self.DANGER_COLOR}; border-radius: 6px;") 
+        
+        self._control_fan(False) 
+        self.purge_timer.stop() # Stop any pending purge
+        
         self.btn_run.setEnabled(True)
         self.btn_clear.setEnabled(True)
         self.btn_clear.setIcon(qta.icon('fa5s.broom', color=self.btn_clear_icon_color))
         
         show_custom_message(self, "Sensor Error", f"Failed to read hardware sensors:\n{error_message}", "error", self.palette)
 
+    
     def run_test(self):
         sample_type = self.sample_type_combobox.currentText()
         if not sample_type:
             show_custom_message(self, "Missing Selection", "Please select a sample type before running the test.", "warning", self.palette)
             return
 
+        # <-- 8. REMOVED FAN INITIALIZATION BLOCK ---
+        # (The check for self.fan_chip is no longer needed here,
+        # as it's handled by _control_fan if it's None)
+
         self.btn_run.setEnabled(False)
         self.btn_clear.setEnabled(False)
         self.btn_clear.setIcon(qta.icon('fa5s.broom', color=self.palette["BORDER"]))
+        
         self.scan_animation = qta.Spin(self.btn_run)
         self.btn_run.setIcon(qta.icon('fa5s.spinner', color=self.btn_run_icon_color, animation=self.scan_animation))
+        
         self.score_display.setText("...")
         self.score_display.setStyleSheet(f"color: {self.ACCENT_COLOR}; background-color: transparent;")
         self.quality_label.setText(f"SCANNING {sample_type}...")
         self.quality_label.setStyleSheet(f"color: {self.ACCENT_COLOR};")
         self.score_border_frame.setStyleSheet(f"QWidget[objectName=\"card\"] {{ border: 2px solid {self.ACCENT_COLOR}; }}")
+        
         for group in self.index_refs.values():
             group['label'].setText("...")
             group['label'].setStyleSheet(f"color: {self.ACCENT_COLOR};")
@@ -594,22 +635,28 @@ class DashboardTab(QWidget):
             group['bar'].setValue(0)
             group['bar'].style().unpolish(group['bar'])
             group['bar'].style().polish(group['bar'])
-        self.status_light.setStyleSheet(f"background-color: {self.ACCENT_COLOR}; border-radius: 9px;")
+            
+        self.status_light.setStyleSheet(f"background-color: {self.ACCENT_COLOR}; border-radius: 6px;") 
         self.progress_bar.setRange(0, 0)
         self.stream_dot_count = 0
         self.streaming_timer.start(250) 
+        
         self.scan_thread = QThread()
         self.scan_worker = SensorWorker()
         self.scan_worker.moveToThread(self.scan_thread)
+        
         self.scan_thread.started.connect(self.scan_worker.run_scan)
         self.scan_worker.finished.connect(self.update_gui_and_archive)
         self.scan_worker.error.connect(self.handle_scan_error)
+        
         self.scan_worker.finished.connect(self.scan_thread.quit)
         self.scan_worker.finished.connect(self.scan_worker.deleteLater)
         self.scan_thread.finished.connect(self.scan_thread.deleteLater)
+        
         self.scan_thread.start()
 
 
+    
     def clear_dashboard(self):
         global current_sample_id
         if hasattr(self, 'anim_score') and self.anim_score:
@@ -617,6 +664,10 @@ class DashboardTab(QWidget):
         if self.scan_animation:
             self.scan_animation.stop()
         self.streaming_timer.stop()
+        
+        self.purge_timer.stop() # Stop any active purge
+        self._control_fan(False) # Turn fan off just in case
+        
         self.sample_type_combobox.setCurrentText("Chicken Breast")
         self.sample_id_label.setText("PS-INIT-0000")
         self.score_display.setText("--")
@@ -624,6 +675,7 @@ class DashboardTab(QWidget):
         self.quality_label.setText("AWAITING SCAN")
         self.quality_label.setStyleSheet(f"color: {self.UNSELECTED_TEXT};")
         self.score_border_frame.setStyleSheet(f"QWidget[objectName=\"card\"] {{ border: 2px solid {self.UNSELECTED_TEXT}; }}")
+        
         for group in self.index_refs.values():
             group['label'].setText("--")
             group['label'].setStyleSheet(f"color: {self.UNSELECTED_TEXT};")
@@ -631,23 +683,27 @@ class DashboardTab(QWidget):
             group['bar'].setValue(0)
             group['bar'].style().unpolish(group['bar'])
             group['bar'].style().polish(group['bar'])
-        self.status_light.setStyleSheet(f"background-color: {self.UNSELECTED_TEXT}; border-radius: 9px;")
+            
+        self.status_light.setStyleSheet(f"background-color: {self.UNSELECTED_TEXT}; border-radius: 6px;") 
         self.raw_label_refs["Temperature"].setText("Temperature: -- °C")
         self.raw_label_refs["Humidity"].setText("Humidity: -- % RH")
         
         self.raw_label_refs["MQ-137 (Ammonia)"].setText("NH₃ (Ammonia): N/A V")
         self.raw_label_refs["MQ-135 (Air Quality)"].setText("Air Quality: N/A V")
-        self.raw_label_refs["MQ-7 (CO)"].setText("CO: N/A V")
-        self.raw_label_refs["MQ-4 (Methane)"].setText("CH₄ (Methane): N/A V")
+        self.raw_label_refs["MQ-3 (Alcohol)"].setText("Alcohol: N/A V")
+        self.raw_label_refs["MQ-4 (Methane)"].setText("CH₄: N/A V")
         
         self.raw_label_refs["WHC Index"].setText("WHC Index: N/A")
         self.raw_label_refs["Fatty Acid Profile"].setText("FAC Index: N/A")
         self.raw_label_refs["Myoglobin"].setText("Myoglobin Index: N/A") 
+        
         for label in self.raw_label_refs.values():
             label.setStyleSheet(f"color: {self.TEXT_COLOR};")
+            
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         current_sample_id = None
+        
         self.btn_run.setIcon(qta.icon('fa5s.play', color=self.btn_run_icon_color))
         self.btn_clear.setIcon(qta.icon('fa5s.broom', color=self.btn_clear_icon_color))
         self.btn_run.setEnabled(True)

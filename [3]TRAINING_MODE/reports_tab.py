@@ -107,7 +107,7 @@ class RawDataViewer(QDialog):
     def __init__(self, palette, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Raw Database Log Viewer")
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(750, 450) # <-- REDUCED Was 900, 600
         self.palette = palette
         self.setStyleSheet(f"QDialog {{ background-color: {palette['BG']}; }}")
 
@@ -186,15 +186,15 @@ def _create_card(parent, title, palette, icon_name=None):
     card_frame = QWidget(parent)
     card_frame.setObjectName("card")
     card_layout = QVBoxLayout(card_frame)
-    card_layout.setContentsMargins(15, 15, 15, 15)
+    card_layout.setContentsMargins(10, 10, 10, 10) # <-- REDUCED
     title_frame = QWidget()
     title_layout = QHBoxLayout(title_frame)
     title_layout.setContentsMargins(0, 0, 0, 0)
-    title_layout.setSpacing(10)
+    title_layout.setSpacing(5) # <-- REDUCED
     if icon_name:
         icon = qta.icon(icon_name, color=palette["ACCENT"])
         icon_label = QLabel()
-        icon_label.setPixmap(icon.pixmap(QSize(35, 35)))
+        icon_label.setPixmap(icon.pixmap(QSize(20, 20))) # <-- REDUCED Was 35, 35
         icon_label.setStyleSheet("background-color: transparent;")
         title_layout.addWidget(icon_label)
     title_label = QLabel(title)
@@ -224,8 +224,8 @@ class ReportsTab(QWidget):
         scroll_area.setWidgetResizable(True)
         scroll_content = QWidget()
         main_layout = QVBoxLayout(scroll_content)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(5, 5, 5, 5) # <-- REDUCED
+        main_layout.setSpacing(10) # <-- REDUCED
 
         # --- 1. REPORT CONTROL CARD (UPDATED) ---
         control_card, control_frame = _create_card(
@@ -234,7 +234,7 @@ class ReportsTab(QWidget):
         main_layout.addWidget(control_card)
         control_layout = QHBoxLayout(control_frame)
         control_layout.setContentsMargins(0, 0, 0, 0)
-        control_layout.setSpacing(15)
+        control_layout.setSpacing(10) # <-- REDUCED
         
         self.btn_reload = QPushButton(" RELOAD Data")
         self.btn_reload.setIcon(qta.icon('fa5s.sync-alt', color=palette.get("BUTTON_TEXT", palette["BG"])))
@@ -251,7 +251,7 @@ class ReportsTab(QWidget):
         control_layout.addWidget(QLabel("Email to:"))
         self.email_input = QLineEdit()
         self.email_input.setPlaceholderText("recipient@example.com")
-        self.email_input.setMinimumWidth(300) # Reduced width to fit
+        self.email_input.setMinimumWidth(200) # <-- REDUCED Was 300
         control_layout.addWidget(self.email_input)
         
         self.btn_email = QPushButton(" EMAIL REPORT")
@@ -271,11 +271,14 @@ class ReportsTab(QWidget):
         data_layout = QVBoxLayout(data_frame)
         data_layout.setContentsMargins(0, 0, 0, 0)
         
+        # --- MODIFIED: Changed MQ-7 to MQ-3 ---
         self.columns = (
             "Timestamp", "Sample ID", "Type", "Temperature", "Humidity",
             "WHC Index", "Fatty Acid Profile", "Myoglobin", "MQ-137 (NH3)",
-            "MQ-135 (Air Quality)", "MQ-7 (CO)", "MQ-4 (CH4)", "Quality"
+            "MQ-135 (Air Quality)", "MQ-3 (Alcohol)", "MQ-4 (CH4)", "Quality"
         )
+        # --- END MODIFICATION ---
+        
         self.tree = QTreeWidget()
         self.tree.setColumnCount(len(self.columns))
         self.tree.setHeaderLabels(self.columns)
@@ -283,7 +286,10 @@ class ReportsTab(QWidget):
         data_layout.addWidget(self.tree)
         
         # Column Sizing
-        numerical_cols = ["Temperature", "Humidity", "WHC Index", "Fatty Acid Profile", "Myoglobin", "MQ-137 (NH3)", "MQ-135 (Air Quality)", "MQ-7 (CO)", "MQ-4 (CH4)"]
+        # --- MODIFIED: Changed MQ-7 to MQ-3 ---
+        numerical_cols = ["Temperature", "Humidity", "WHC Index", "Fatty Acid Profile", "Myoglobin", "MQ-137 (NH3)", "MQ-135 (Air Quality)", "MQ-3 (Alcohol)", "MQ-4 (CH4)"]
+        # --- END MODIFICATION ---
+        
         for i, col in enumerate(self.columns):
             if col in numerical_cols:
                 self.tree.header().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
@@ -292,7 +298,7 @@ class ReportsTab(QWidget):
                 self.tree.header().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
                 self.tree.setColumnWidth(i, 100)
             elif col == "Timestamp":
-                self.tree.setColumnWidth(i, 160)
+                self.tree.setColumnWidth(i, 120) # <-- REDUCED
             else:
                 self.tree.header().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
 
@@ -343,7 +349,7 @@ class ReportsTab(QWidget):
         layout.setSpacing(15)
         
         label = QLabel("Which report would you like to email?")
-        label.setFont(QFont("Bahnschrift", 16))
+        label.setFont(QFont("Bahnschrift", 11)) # <-- REDUCED
         layout.addWidget(label)
         
         btn_layout = QHBoxLayout()
@@ -492,7 +498,7 @@ class ReportsTab(QWidget):
         # (Unchanged)
         self.tree.clear()
         brush_nodata = QBrush(QColor(self.palette["UNSELECTED_TEXT"]))
-        nodata_font = QFont("Bahnschrift", 10, italic=True)
+        nodata_font = QFont("Bahnschrift", 9, italic=True) # <-- REDUCED
         loading_item = QTreeWidgetItem(self.tree, ["", "Loading report data..."] + [""] * (len(self.columns) - 2))
         loading_item.setForeground(0, brush_nodata)
         loading_item.setFont(0, nodata_font)
@@ -505,7 +511,7 @@ class ReportsTab(QWidget):
         brush_low = QBrush(QColor(self.palette["DANGER"]))
         brush_normal = QBrush(QColor(self.palette["NORMAL_COLOR"]))
         brush_nodata = QBrush(QColor(self.palette["UNSELECTED_TEXT"]))
-        nodata_font = QFont("Bahnschrift", 10, italic=True)
+        nodata_font = QFont("Bahnschrift", 9, italic=True) # <-- REDUCED
         
         num_cols = len(self.columns)
         

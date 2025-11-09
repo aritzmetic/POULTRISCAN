@@ -46,12 +46,12 @@ class CustomDialog(QDialog):
         else:
             self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint | Qt.WindowType.Tool)
             
-        self.setMinimumWidth(500) # Was 400
-        self.setStyleSheet(f"QDialog {{ background-color: {BG}; padding: 25px; }}") # Was 20px
+        self.setMinimumWidth(350) # <-- REDUCED Was 500
+        self.setStyleSheet(f"QDialog {{ background-color: {BG}; padding: 10px; }}") # <-- REDUCED Was 25px
 
         # Main Layout
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(20) # Was 15
+        main_layout.setSpacing(10) # <-- REDUCED Was 20
 
         # Content Frame
         content_frame = QWidget()
@@ -72,20 +72,20 @@ class CustomDialog(QDialog):
         icon = qta.icon(icon_name, color=main_color)
 
         icon_label = QLabel()
-        icon_label.setPixmap(icon.pixmap(QSize(55, 55))) # Was 48, 48
+        icon_label.setPixmap(icon.pixmap(QSize(32, 32))) # <-- REDUCED Was 55, 55
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(icon_label)
 
         # Message Label
         message_label = QLabel(message)
-        message_label.setFont(QFont("Bahnschrift", 16)) # Was Segoe UI 10pt
+        message_label.setFont(QFont("Bahnschrift", 10)) # <-- REDUCED Was 16
         message_label.setStyleSheet(f"color: {TEXT}; background-color: transparent;")
         message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         message_label.setWordWrap(True)
         content_layout.addWidget(message_label)
 
         if type == "processing":
-            main_layout.addSpacing(10)
+            main_layout.addSpacing(5) # <-- REDUCED
             self.progress_bar = QProgressBar()
             self.progress_bar.setRange(0, 0) # Indeterminate
             self.progress_bar.setTextVisible(False)
@@ -93,18 +93,18 @@ class CustomDialog(QDialog):
                 QProgressBar {{
                     border: none;
                     background-color: {palette["BORDER"]};
-                    height: 10px; /* Was 6px */
-                    border-radius: 5px; /* Was 3px */
+                    height: 6px; /* <-- REDUCED Was 10px */
+                    border-radius: 3px; /* <-- REDUCED Was 5px */
                 }}
                 QProgressBar::chunk {{
                     background-color: {main_color};
-                    border-radius: 5px;
+                    border-radius: 3px;
                 }}
             """)
             content_layout.addWidget(self.progress_bar)
 
 
-        main_layout.addSpacing(20)
+        main_layout.addSpacing(10) # <-- REDUCED
 
         # Button Frame
         button_frame = QWidget()
@@ -113,15 +113,15 @@ class CustomDialog(QDialog):
         button_layout.addStretch()
         main_layout.addWidget(button_frame)
 
-        # Button Styling (INCREASED)
+        # Button Styling (REDUCED)
         button_style = f"""
             QPushButton {{
-                font: bold 16pt 'Bahnschrift'; /* Was 10pt Segoe */
+                font: bold 10pt 'Bahnschrift'; /* <-- REDUCED Was 16pt */
                 background-color: {main_color};
                 color: {main_text_color};
                 border: none;
                 border-radius: 3px;
-                padding: 12px 22px; /* Was 7px 15px */
+                padding: 6px 12px; /* <-- REDUCED Was 12px 22px */
             }}
             QPushButton:hover {{
                 background-color: {main_color_hover};
@@ -129,12 +129,12 @@ class CustomDialog(QDialog):
         """
         secondary_button_style = f"""
             QPushButton {{
-                font: bold 16pt 'Bahnschrift'; /* Was 10pt Segoe */
+                font: bold 10pt 'Bahnschrift'; /* <-- REDUCED Was 16pt */
                 background-color: {palette["SECONDARY_BG"]};
                 color: {palette["UNSELECTED_TEXT"]};
                 border: 1px solid {palette["BORDER"]};
                 border-radius: 3px;
-                padding: 12px 22px; /* Was 7px 15px */
+                padding: 6px 12px; /* <-- REDUCED Was 12px 22px */
             }}
             QPushButton:hover {{
                 background-color: {secondary_bg_hover};

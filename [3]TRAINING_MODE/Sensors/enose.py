@@ -19,11 +19,11 @@ class SensorUnavailable:
         raise UninitializedENoseError("eNose (ADS1115/MQ sensors) access attempted, but initialization failed. Check wiring and I2C.")
 
 # Define the sensor names and their corresponding ADC channel index (A0=0, A1=1, A2=2, A3=3)
-# Order: 137, 135, 7, 4
+# --- MODIFIED: Order: 137, 135, 3, 4 ---
 mq_sensor_names = {
     0: "MQ-137 (Ammonia)",     # Connected to A0
     1: "MQ-135 (Air Quality)", # Connected to A1
-    2: "MQ-7 (CO)",            # Connected to A2
+    2: "MQ-3 (Alcohol)",       # --- MODIFIED: Connected to A2
     3: "MQ-4 (Methane)",       # Connected to A3
 }
 
@@ -46,7 +46,7 @@ try:
     # Map the AnalogIn channels to the sensor dictionary using the defined names/pins
     mq_sensors[mq_sensor_names[0]] = AnalogIn(ads, ADS_PINS[0]) # MQ-137 on A0
     mq_sensors[mq_sensor_names[1]] = AnalogIn(ads, ADS_PINS[1]) # MQ-135 on A1
-    mq_sensors[mq_sensor_names[2]] = AnalogIn(ads, ADS_PINS[2]) # MQ-7 on A2
+    mq_sensors[mq_sensor_names[2]] = AnalogIn(ads, ADS_PINS[2]) # --- MODIFIED: MQ-3 on A2
     mq_sensors[mq_sensor_names[3]] = AnalogIn(ads, ADS_PINS[3]) # MQ-4 on A3
     
     ENOSE_INITIALIZED = True
@@ -64,7 +64,7 @@ def read_enose():
     """Reads raw gas sensor data (voltage) from the actual sensor."""
     readings = {}
     
-    # Use the defined order (137, 135, 7, 4) to iterate over the dictionary keys
+    # --- MODIFIED: Use the defined order (137, 135, 3, 4) to iterate over the dictionary keys ---
     ordered_names = [
         mq_sensor_names[0], 
         mq_sensor_names[1], 

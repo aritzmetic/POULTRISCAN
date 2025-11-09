@@ -13,15 +13,15 @@ def _create_card(parent, title, palette, icon_name=None):
     card_frame = QWidget(parent)
     card_frame.setObjectName("card")
     card_layout = QVBoxLayout(card_frame)
-    card_layout.setContentsMargins(15, 15, 15, 15)
+    card_layout.setContentsMargins(10, 10, 10, 10) # <-- REDUCED
     title_frame = QWidget()
     title_layout = QHBoxLayout(title_frame)
     title_layout.setContentsMargins(0, 0, 0, 0)
-    title_layout.setSpacing(10)
+    title_layout.setSpacing(5) # <-- REDUCED
     if icon_name:
         icon = qta.icon(icon_name, color=palette["ACCENT"]) 
         icon_label = QLabel()
-        icon_label.setPixmap(icon.pixmap(QSize(35, 35))) # Was 30, 30
+        icon_label.setPixmap(icon.pixmap(QSize(20, 20))) # <-- REDUCED Was 35, 35
         icon_label.setStyleSheet("background-color: transparent;")
         title_layout.addWidget(icon_label)
     title_label = QLabel(title)
@@ -40,12 +40,12 @@ def create_about_tab(tab_control, palette):
 
     about_tab_content = QWidget()
     main_layout = QVBoxLayout(about_tab_content)
-    main_layout.setContentsMargins(10, 10, 10, 10)
-    main_layout.setSpacing(15)
+    main_layout.setContentsMargins(5, 5, 5, 5) # <-- REDUCED
+    main_layout.setSpacing(10) # <-- REDUCED
     main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
     
-    detail_font = QFont("Bahnschrift", 18) # Was 14
-    bold_font = QFont("Bahnschrift", 18)   # Was 14
+    detail_font = QFont("Bahnschrift", 9) # <-- REDUCED Was 18
+    bold_font = QFont("Bahnschrift", 10)  # <-- REDUCED Was 18
     bold_font.setBold(True)
 
     # --- 1. PROJECT INFORMATION CARD ---
@@ -54,7 +54,7 @@ def create_about_tab(tab_control, palette):
     )
     main_layout.addWidget(info_card)
     info_layout = QVBoxLayout(info_frame)
-    info_layout.setSpacing(10) 
+    info_layout.setSpacing(5) # <-- REDUCED
     l1 = QLabel(
         "PoultriScan is a non-invasive, multi-sensor platform designed for rapid quality "
         "assessment of broiler chicken meat. It utilizes sensor fusion technology combining "
@@ -67,11 +67,11 @@ def create_about_tab(tab_control, palette):
     info_layout.addWidget(l1)
     
     l2 = QLabel(f"Current Version: 1.0.0 (Alpha)")
-    l2.setStyleSheet(f"color: {palette['ACCENT']}; font: bold 18pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # Was 14pt
+    l2.setStyleSheet(f"color: {palette['ACCENT']}; font: bold 11pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # <-- REDUCED
     info_layout.addWidget(l2)
     
     l3 = QLabel(f"Target Release: Q4 2025 (Initial Production)")
-    l3.setStyleSheet(f"color: {palette['ACCENT']}; font: 18pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # Was 14pt
+    l3.setStyleSheet(f"color: {palette['ACCENT']}; font: 10pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # <-- REDUCED
     info_layout.addWidget(l3)
 
     # --- 2. DEVELOPMENT TEAM CARD ---
@@ -80,7 +80,7 @@ def create_about_tab(tab_control, palette):
     )
     main_layout.addWidget(team_card)
     team_layout = QVBoxLayout(team_frame)
-    team_layout.setSpacing(15) 
+    team_layout.setSpacing(10) # <-- REDUCED
     team_data = [
         {
             "role": "Project Lead: Ralph Lorenz Codilan",
@@ -132,7 +132,7 @@ def create_about_tab(tab_control, palette):
         role_label.setWordWrap(True)
         team_layout.addWidget(role_label)
         task_layout = QVBoxLayout() 
-        task_layout.setContentsMargins(20, 5, 0, 5) 
+        task_layout.setContentsMargins(15, 5, 0, 5) # <-- REDUCED
         task_layout.setSpacing(5)
         for task in member["tasks"]:
             task_label = QLabel(f"• {task}")
@@ -168,10 +168,10 @@ def create_about_tab(tab_control, palette):
     )
     main_layout.addWidget(license_card)
     license_layout = QVBoxLayout(license_frame)
-    license_layout.setSpacing(10) 
+    license_layout.setSpacing(5) # <-- REDUCED
     
     l5 = QLabel("Licensing: PoultriScan is released under the MIT License.")
-    l5.setStyleSheet(f"color: {palette['ACCENT']}; font: bold 18pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # Was 14pt
+    l5.setStyleSheet(f"color: {palette['ACCENT']}; font: bold 11pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # <-- REDUCED
     license_layout.addWidget(l5)
     
     l6 = QLabel(
@@ -180,11 +180,11 @@ def create_about_tab(tab_control, palette):
         "control tool in commercial food production."
     )
     l6.setWordWrap(True)
-    l6.setStyleSheet(f"color: {palette['DANGER']}; font: bold 18pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # Was 14pt
+    l6.setStyleSheet(f"color: {palette['DANGER']}; font: bold 11pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # <-- REDUCED
     license_layout.addWidget(l6)
     
     l7 = QLabel("© 2025 PoultriScan Development Team. All rights reserved.")
-    l7.setStyleSheet(f"color: {palette['UNSELECTED_TEXT']}; font: 18pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # Was 14pt
+    l7.setStyleSheet(f"color: {palette['UNSELECTED_TEXT']}; font: 10pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # <-- REDUCED
     license_layout.addWidget(l7)
 
     main_layout.addStretch() 

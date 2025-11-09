@@ -37,7 +37,6 @@ except ImportError:
 ## ⚠️ Error Handling and Placeholder Setup
 # ====================================================================
 
-# Global flag and placeholder values
 AS7265X_INITIALIZED = False
 SPECTROMETER_PLACEHOLDER = "No Sensor Yet"
 
@@ -46,10 +45,6 @@ class UninitializedAS7265XError(Exception):
     pass
 
 class SensorUnavailable:
-    """
-    Placeholder class for the spectrometer that raises an error
-    if any methods are accessed before successful initialization.
-    """
     def __init__(self, *args):
         pass
     def _raise_error(self):
@@ -59,6 +54,7 @@ class SensorUnavailable:
     def take_measurements(self): self._raise_error()
     def enable_bulb(self, led_type): self._raise_error()
     def disable_bulb(self, led_type): self._raise_error()
+    # --- ADDED: Individual channel read methods ---
     def get_calibrated_a(self): self._raise_error()
     def get_calibrated_b(self): self._raise_error()
     def get_calibrated_c(self): self._raise_error()
@@ -83,7 +79,7 @@ spectrometer = SensorUnavailable()
 AS7265X_PLACEHOLDER_ZEROS = {f"AS7265X_ch{i+1}": 0 for i in range(18)}
 
 # ====================================================================
-## 💡 Cleanup Function (MODIFIED)
+## 💡 Cleanup Function
 # ====================================================================
 
 def _cleanup_as7265x():
@@ -100,7 +96,7 @@ def _cleanup_as7265x():
             print(f"ATEIXT: Error during AS7265x cleanup: {e}")
 
 # ====================================================================
-## ⚙️ Hardware Initialization (MODIFIED)
+## ⚙️ Hardware Initialization
 # ====================================================================
 
 try:
@@ -128,7 +124,7 @@ except (ImportError, RuntimeError, AttributeError) as e:
     spectrometer = SensorUnavailable()
 
 # ====================================================================
-## 💡 NEW: Public LED Control Functions (MODIFIED)
+## 💡 Public LED Control Functions (for Calibration)
 # ====================================================================
 
 def as_led_on():
@@ -174,57 +170,105 @@ def as_ir_led_off():
         print(f"Warning: Could not disable AS7265x IR LED: {e}")
 
 # ====================================================================
-## 📊 Spectrometer Reading Function (Unchanged)
+## 📊 Spectrometer Reading Function (HEAVILY MODIFIED)
 # ====================================================================
 
-def read_spectrometer():
+# --- MODIFIED: Added leds_on parameter ---
+def read_spectrometer(leds_on=True):
     """
-    Reads the AS7265x spectrometer and returns the raw 18-channel data.
-    The calling function (e.g., TrainingTab) must turn the LED on/off.
+    Performs a full 18-channel scan.
+    
+    If leds_on=True (default):
+    - Uses White LED for Visible channels (G, H, R, I, S, J)
+    - Uses IR LED for NIR channels (T, U, V, W, K, L)
+    - Uses UV LED for UV/Violet channels (A, B, C, D, E, F)
+    
+    If leds_on=False (dark reference):
+    - Keeps all LEDs OFF for all three measurements.
     """
     try:
-        # Trigger a new measurement
-        spectrometer.take_measurements()
+        final_readings = {}
+        
+        # 1. Read VISIBLE channels (G, H, R, I, S, J)
+        if leds_on:
+            as_led_on()
+            time.sleep(2.0) # 2-second stabilization
+        
+        spectrometer.take_measurements() # Take measurement (LEDs are on or off)
+        
+        final_readings["AS7265X_ch7"] = spectrometer.get_calibrated_g() # 560nm
+        final_readings["AS7265X_ch8"] = spectrometer.get_calibrated_h() # 585nm
+        final_readings["AS7265X_ch9"] = spectrometer.get_calibrated_r() # 610nm
+        final_readings["AS7265X_ch10"] = spectrometer.get_calibrated_i() # 645nm
+        final_readings["AS7265X_ch11"] = spectrometer.get_calibrated_s() # 680nm
+        final_readings["AS7265X_ch12"] = spectrometer.get_calibrated_j() # 705nm
+        
+        if leds_on:
+            as_led_off()
+            time.sleep(0.3) # Settle pause
+        
+        # 2. Read NIR channels (T, U, V, W, K, L)
+        if leds_on:
+            as_ir_led_on()
+            time.sleep(2.0) # 2-second stabilization
+        
+        spectrometer.take_measurements() # Take 2nd measurement
+        
+        final_readings["AS7265X_ch13"] = spectrometer.get_calibrated_t() # 730nm
+        final_readings["AS7265X_ch14"] = spectrometer.get_calibrated_u() # 760nm
+        final_readings["AS7265X_ch15"] = spectrometer.get_calibrated_v() # 810nm
+        final_readings["AS7265X_ch16"] = spectrometer.get_calibrated_w() # 860nm
+        final_readings["AS7265X_ch17"] = spectrometer.get_calibrated_k() # 900nm
+        final_readings["AS7265X_ch18"] = spectrometer.get_calibrated_l() # 940nm
+        
+        if leds_on:
+            as_ir_led_off()
+            time.sleep(0.3) # Settle pause
 
-        sensor_values = [
-            spectrometer.get_calibrated_a(), # ch1
-            spectrometer.get_calibrated_b(), # ch2
-            spectrometer.get_calibrated_c(), # ch3
-            spectrometer.get_calibrated_d(), # ch4
-            spectrometer.get_calibrated_e(), # ch5
-            spectrometer.get_calibrated_f(), # ch6
-            spectrometer.get_calibrated_g(), # ch7
-            spectrometer.get_calibrated_h(), # ch8
-            spectrometer.get_calibrated_r(), # ch9
-            spectrometer.get_calibrated_i(), # ch10
-            spectrometer.get_calibrated_s(), # ch11
-            spectrometer.get_calibrated_j(), # ch12
-            spectrometer.get_calibrated_t(), # ch13
-            spectrometer.get_calibrated_u(), # ch14
-            spectrometer.get_calibrated_v(), # ch15
-            spectrometer.get_calibrated_w(), # ch16
-            spectrometer.get_calibrated_k(), # ch17
-            spectrometer.get_calibrated_l()  # ch18
-        ]
-        channel_names = [f"AS7265X_ch{i+1}" for i in range(18)]
-        spectral_data = dict(zip(channel_names, sensor_values))
-        return spectral_data
+        # 3. Read UV/VIOLET channels (A, B, C, D, E, F)
+        if leds_on:
+            as_uv_led_on()
+            time.sleep(2.0) # 2-second stabilization
+            
+        spectrometer.take_measurements() # Take 3rd measurement
+        
+        final_readings["AS7265X_ch1"] = spectrometer.get_calibrated_a() # 410nm
+        final_readings["AS7265X_ch2"] = spectrometer.get_calibrated_b() # 435nm
+        final_readings["AS7265X_ch3"] = spectrometer.get_calibrated_c() # 460nm
+        final_readings["AS7265X_ch4"] = spectrometer.get_calibrated_d() # 485nm
+        final_readings["AS7265X_ch5"] = spectrometer.get_calibrated_e() # 510nm
+        final_readings["AS7265X_ch6"] = spectrometer.get_calibrated_f() # 535nm
+        
+        if leds_on:
+            as_uv_led_off()
+        
+        return final_readings
 
     except (UninitializedAS7265XError, Exception) as e:
         if not 'printed_as7265x_error' in globals():
-            print(f"Warning: AS7265x sensor failed. {e}. Using placeholders.")
+            print(f"Warning: AS7265x FUSED scan failed. {e}. Using placeholders.")
             globals()['printed_as7265x_error'] = True
+        # Ensure all LEDs are off on failure
+        try:
+            as_led_off()
+            as_uv_led_off()
+            as_ir_led_off()
+        except:
+            pass
         return AS7265X_PLACEHOLDER_ZEROS
+# --- END MODIFICATION ---
 
 # ====================================================================
-## ✨ Sensor Fusion Function (MODIFIED with 2.0s delay)
+## ✨ Sensor Fusion Function (MODIFIED)
 # ====================================================================
 
 def read_all_sensors():
     """
     Consolidates all sensor readings (AHT20, eNose, AS7265x) into a single 
-    54-channel dictionary for the main Dashboard.
-    Uses a 2-second delay for LED stabilization.
+    18-channel fused dictionary for the main Dashboard.
+    
+    This function assumes a normal reading, so it calls read_spectrometer()
+    with the default leds_on=True.
     """
     try:
         temp_hum_data = read_aht20()
@@ -233,42 +277,18 @@ def read_all_sensors():
         print(f"Hardware Error in Fusion: {e}")
         raise
         
-    # --- MODIFIED: Increased stabilization time to 2.0s ---
-    
-    # 1. Read White
-    as_led_on()
-    time.sleep(2.0) # <-- 2-second delay
-    spec_data_white = read_spectrometer() # Returns {'AS7265X_ch1': ...}
-    as_led_off()
-    time.sleep(0.3) # <-- Added short pause for sensor to settle
-    
-    # 2. Read UV
-    as_uv_led_on()
-    time.sleep(2.0) # <-- 2-second delay
-    spec_data_uv_raw = read_spectrometer() # Returns {'AS7265X_ch1': ...}
-    as_uv_led_off()
-    time.sleep(0.3) # <-- Added short pause for sensor to settle
-    # Rename keys to AS_UV_ch...
-    spec_data_uv = {f"AS_UV_ch{i+1}": spec_data_uv_raw.get(f"AS7265X_ch{i+1}", 0) for i in range(18)}
-
-    # 3. Read IR
-    as_ir_led_on()
-    time.sleep(2.0) # <-- 2-second delay
-    spec_data_ir_raw = read_spectrometer() # Returns {'AS7265X_ch1': ...}
-    as_ir_led_off()
-    # Rename keys to AS_IR_ch...
-    spec_data_ir = {f"AS_IR_ch{i+1}": spec_data_ir_raw.get(f"AS7265X_ch{i+1}", 0) for i in range(18)}
+    # --- MODIFIED: Call the fused read_spectrometer() function ---
+    # By default, leds_on=True, which is correct for the dashboard
+    spec_data = read_spectrometer()
+    # --- END MODIFICATION ---
 
     raw_readings = {
         **temp_hum_data,
         **mq_data,
-        **spec_data_white,
-        **spec_data_uv,
-        **spec_data_ir
+        **spec_data
     }
     
     return raw_readings
-    # --- END MODIFICATION ---
 
 
 # ====================================================================
@@ -286,6 +306,7 @@ def runExample(label=None, sample_delay=1.0):
         print("Unable to initialize AS7265x. Check connection.", file=sys.stderr)
         return
     
+    # This standalone script will just use the white LED for simplicity
     myAS7265x.enable_bulb(0) # 0 = White LED
 
     headers = [

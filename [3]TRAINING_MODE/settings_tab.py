@@ -22,15 +22,15 @@ def _create_card(parent, title, palette, icon_name=None):
     card_frame = QWidget(parent)
     card_frame.setObjectName("card")
     card_layout = QVBoxLayout(card_frame)
-    card_layout.setContentsMargins(15, 15, 15, 15)
+    card_layout.setContentsMargins(10, 10, 10, 10) # <-- REDUCED
     title_frame = QWidget()
     title_layout = QHBoxLayout(title_frame)
     title_layout.setContentsMargins(0, 0, 0, 0)
-    title_layout.setSpacing(10)
+    title_layout.setSpacing(5) # <-- REDUCED
     if icon_name:
         icon = qta.icon(icon_name, color=palette["ACCENT"])
         icon_label = QLabel()
-        icon_label.setPixmap(icon.pixmap(QSize(35, 35))) # Was 30, 30
+        icon_label.setPixmap(icon.pixmap(QSize(20, 20))) # <-- REDUCED Was 35, 35
         icon_label.setStyleSheet("background-color: transparent;")
         title_layout.addWidget(icon_label)
     title_label = QLabel(title)
@@ -51,7 +51,7 @@ def _create_status_indicator(parent, text, status_color, palette):
     layout.setContentsMargins(0, 5, 0, 5)
     icon = qta.icon("fa5s.circle", color=status_color)
     light = QLabel()
-    light.setPixmap(icon.pixmap(QSize(12, 12))) # Was 10, 10
+    light.setPixmap(icon.pixmap(QSize(10, 10))) # <-- REDUCED Was 12, 12
     layout.addWidget(light)
     layout.addWidget(QLabel(text))
     layout.addStretch()
@@ -99,8 +99,8 @@ def create_settings_tab(tab_control, main_window, theme_switch_callback, palette
 
     settings_tab_content = QWidget()
     main_layout = QVBoxLayout(settings_tab_content)
-    main_layout.setContentsMargins(10, 10, 10, 10)
-    main_layout.setSpacing(15)
+    main_layout.setContentsMargins(5, 5, 5, 5) # <-- REDUCED
+    main_layout.setSpacing(10) # <-- REDUCED
     main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
     
     btn_text_color = palette.get("BUTTON_TEXT", palette["BG"])
@@ -168,7 +168,7 @@ def create_settings_tab(tab_control, main_window, theme_switch_callback, palette
     info_layout.addWidget(col1_frame, 1)
     
     l1 = QLabel(f"PoultriScan Version: 1.0.0")
-    l1.setStyleSheet(f"color: {palette['ACCENT']}; font: bold 18pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # Was 14pt
+    l1.setStyleSheet(f"color: {palette['ACCENT']}; font: bold 11pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # <-- REDUCED
     col1_layout.addWidget(l1)
     
     time_label = QLabel("Current System Time: ...")
@@ -188,7 +188,7 @@ def create_settings_tab(tab_control, main_window, theme_switch_callback, palette
     info_layout.addWidget(col2_frame, 1)
     
     l3 = QLabel("System Status")
-    l3.setStyleSheet(f"color: {palette['TEXT']}; font: bold 18pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # Was 14pt
+    l3.setStyleSheet(f"color: {palette['TEXT']}; font: bold 11pt 'Bahnschrift'; background-color: {palette['SECONDARY_BG']};") # <-- REDUCED
     col2_layout.addWidget(l3)
     col2_layout.addWidget(_create_status_indicator(col2_frame, "Sensor Hub", palette["SUCCESS"], palette))
     col2_layout.addWidget(_create_status_indicator(col2_frame, "Spectrometer", palette["SUCCESS"], palette))
