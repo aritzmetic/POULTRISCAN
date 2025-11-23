@@ -1,0 +1,10 @@
+{
+  "ambient_hum": 75.63,
+  "ambient_temp": 32.2,
+  "baseline_mq135": 0.161,
+  "baseline_mq137": 1.3725333333333334,
+  "baseline_mq3": 0.7718666666666667,
+  "baseline_mq4": 0.28633333333333333,
+  "baseline_timestamp": "2025-11-12T22:48:42.798848",
+  "operator": "system"
+}
